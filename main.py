@@ -4,9 +4,13 @@ import config
 openai.api_key = config.api_key
 
 # Define a function to generate a prompt based on the user's response using ChatGPT
-def generate_prompt(user_response):
-    # Start the prompt with a basic question and include the user's response
-    prompt = f"How was the product? User response: {user_response} \n"
+def generate_prompt(user_response, prev_response=None):
+    if prev_response:
+        # Start the prompt with the previous GPT-generated response and include the user's response
+        prompt = f"{prev_response.strip()} User response: {user_response} \n"
+    else:
+        # Start the prompt with a basic question and include the user's response
+        prompt = f"How was the product? User response: {user_response} \n"
     # Use the OpenAI API to generate a completion based on the prompt
     completions = openai.Completion.create(
         engine="text-davinci-003",
@@ -29,8 +33,9 @@ def get_user_input():
 def main():
     # Get the user's initial review
     user_response = get_user_input()
+    prev_response = None
     # Generate a prompt based on the user's response and display it to the user
-    prompt = generate_prompt(user_response)
+    prompt = generate_prompt(user_response, prev_response)
     # Continuously ask the user questions based on their responses
     while True:
         # Get the user's response to the prompt and exit if they type "exit"
@@ -38,7 +43,8 @@ def main():
         if user_response.strip().lower() == "exit":
             break
         # Generate a new prompt based on the user's response and display it
-        prompt = generate_prompt(user_response)
+        prev_response = generate_prompt(user_response, prev_response)
+        prompt = generate_prompt(user_response, prev_response)
 
 # Run the main function if this script is being executed directly
 if __name__ == "__main__":
