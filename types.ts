@@ -303,7 +303,9 @@ export interface FormManifesto {
   productVision?: string;
   targetAudience?: string;
   businessGoals?: string[];
+  keyQuestionAreas?: string[];
   conversationTone: 'professional' | 'friendly' | 'casual' | 'expert';
+  successMetrics?: string[];
   createdAt: string;
   updatedAt: string;
 }

@@ -5,7 +5,7 @@ import {
   DualContextQuestionRequest,
   ContextAwareQuestion
 } from '../types';
-import { supabaseService } from './supabaseService';
+import { supabase } from './supabase';
 
 /**
  * Dual-Context Service
@@ -35,7 +35,7 @@ class DualContextService {
         aiAnalysis = await this.analyzeContent(content, entryType);
       }
 
-      const { data, error } = await supabaseService.client
+      const { data, error } = await supabase
         .rpc('add_form_context_entry', {
           target_form_id: formId,
           entry_type: entryType,
@@ -58,8 +58,8 @@ class DualContextService {
    */
   async getCachedFormContext(formId: string): Promise<CachedFormContext | null> {
     try {
-      const { data, error } = await supabaseService.client
-        .from('cached_form_context')
+      const { data, error } = await supabase
+        .from('form_context_cache')
         .select('*')
         .eq('form_id', formId)
         .single();
@@ -82,7 +82,7 @@ class DualContextService {
           avgResponseLength: 0,
           topPerformingQuestions: []
         },
-        lastUpdated: data.last_updated
+        lastUpdated: data.updated_at
       };
     } catch (error) {
       console.error('Error fetching cached form context:', error);
@@ -205,7 +205,7 @@ class DualContextService {
     manifestoContext: Omit<UserManifestoContext, 'conversationTone'> & { conversationTone?: UserManifestoContext['conversationTone'] }
   ): Promise<void> {
     try {
-      const { error } = await supabaseService.client
+      const { error } = await supabase
         .from('user_manifesto_context')
         .upsert({
           form_id: formId,
@@ -231,7 +231,7 @@ class DualContextService {
    */
   async getManifestoContext(formId: string): Promise<UserManifestoContext | null> {
     try {
-      const { data, error } = await supabaseService.client
+      const { data, error } = await supabase
         .from('user_manifesto_context')
         .select('*')
         .eq('form_id', formId)

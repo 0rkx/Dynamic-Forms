@@ -247,37 +247,26 @@ export class SupabaseService {
       if (error) {
         this.handleError(error, 'Create form');
       }
-
-      // Create manifesto if provided (prefer structured data over text)
-      if (form.manifestoData) {
+      
+      if (form.manifesto && data) {
         try {
-          await this.upsertFormManifesto(form.id, {
-            productVision: form.manifestoData.productVision,
-            targetAudience: form.manifestoData.targetAudience,
-            businessGoals: form.manifestoData.businessGoals,
-            conversationTone: form.manifestoData.conversationTone
+          await this.upsertFormManifesto(data.id, {
+            productVision: form.manifestoData?.productVision || '',
+            targetAudience: form.manifestoData?.targetAudience || '',
+            businessGoals: form.manifestoData?.businessGoals || [],
+            keyQuestionAreas: form.manifestoData?.keyQuestionAreas || [],
+            conversationTone: form.manifestoData?.conversationTone || 'friendly',
           });
         } catch (manifestoError) {
-          console.warn('Failed to create structured manifesto:', manifestoError);
-          // Fallback to text manifesto if structured fails
-          if (form.manifesto) {
-            try {
-              await this.createManifestoFromText(form.id, form.manifesto);
-            } catch (textManifestoError) {
-              console.warn('Failed to create text manifesto:', textManifestoError);
-            }
-          }
-        }
-      } else if (form.manifesto) {
-        try {
-          await this.createManifestoFromText(form.id, form.manifesto);
-        } catch (manifestoError) {
-          console.warn('Failed to create manifesto:', manifestoError);
-          // Don't fail the form creation if manifesto creation fails
+          console.error(`Failed to save manifesto for form ${data.id}:`, manifestoError);
         }
       }
 
-      return this.transformFormFromDB(data);
+      const newForm = await this.getFormById(data.id);
+      if (!newForm) {
+        this.handleError(new Error('Failed to retrieve newly created form'), 'Create form');
+      }
+      return newForm!;
     });
   }
 
@@ -330,6 +319,7 @@ export class SupabaseService {
             productVision: updates.manifestoData.productVision,
             targetAudience: updates.manifestoData.targetAudience,
             businessGoals: updates.manifestoData.businessGoals,
+            keyQuestionAreas: updates.manifestoData.keyQuestionAreas || [],
             conversationTone: updates.manifestoData.conversationTone
           });
         } catch (manifestoError) {
@@ -552,8 +542,7 @@ export class SupabaseService {
       // Test direct anonymous insert to bypass any potential session issues
       const { data, error } = await supabase
         .from('form_responses')
-        .insert(insertData)
-        .select(); // Return the inserted data for verification
+        .insert(insertData);
 
       if (error) {
         console.error('SupabaseService.submitResponse: database insert failed:', error);
@@ -573,7 +562,7 @@ export class SupabaseService {
         this.handleError(error, 'Submit response');
       }
 
-      console.log('SupabaseService.submitResponse: response inserted successfully:', data);
+      console.log('SupabaseService.submitResponse: response inserted successfully, id:', responseId);
       return responseId;
     });
   }
@@ -718,29 +707,22 @@ export class SupabaseService {
   // =============================================
 
   /**
-   * Get user profile information
+   * Get user information from auth
    */
-  async getUserProfile(userId: string): Promise<any | null> {
+  async getUserInfo(userId: string): Promise<any | null> {
     if (!userId) return null;
 
     try {
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .select('*')
-        .eq('id', userId)
-        .single();
-
+      const { data: { user }, error } = await supabase.auth.admin.getUserById(userId);
+      
       if (error) {
-        if (error.code === 'PGRST116') {
-          return null; // Not found
-        }
-        console.error('Error fetching user profile:', error);
+        console.error('Error fetching user info:', error);
         return null;
       }
 
-      return data;
+      return user;
     } catch (error) {
-      console.error('Error fetching user profile:', error);
+      console.error('Error fetching user info:', error);
       return null;
     }
   }
@@ -1027,6 +1009,7 @@ export class SupabaseService {
     }
 
     return this.retryOperation(async () => {
+      // First try with the new schema (including success_metrics)
       const { data, error } = await supabase
         .from('form_manifestos')
         .upsert({
@@ -1034,8 +1017,9 @@ export class SupabaseService {
           product_vision: manifesto.productVision,
           target_audience: manifesto.targetAudience,
           business_goals: manifesto.businessGoals,
-            key_question_areas: manifesto.keyQuestionAreas, // Added this line
+          key_question_areas: manifesto.keyQuestionAreas,
           conversation_tone: manifesto.conversationTone,
+          success_metrics: manifesto.successMetrics || [],
           updated_at: new Date().toISOString()
         }, {
           onConflict: 'form_id'
@@ -1044,7 +1028,35 @@ export class SupabaseService {
         .single();
 
       if (error) {
-        this.handleError(error, 'Upsert form manifesto');
+        // Check if it's a column doesn't exist error (old schema)
+        if (error.message?.includes('column') && error.message?.includes('success_metrics')) {
+          console.warn('Database schema appears to be outdated. Trying without success_metrics column.');
+          
+          // Retry without the success_metrics column for backwards compatibility
+          const { data: fallbackData, error: fallbackError } = await supabase
+            .from('form_manifestos')
+            .upsert({
+              form_id: formId,
+              product_vision: manifesto.productVision,
+              target_audience: manifesto.targetAudience,
+              business_goals: manifesto.businessGoals,
+              key_question_areas: manifesto.keyQuestionAreas,
+              conversation_tone: manifesto.conversationTone,
+              updated_at: new Date().toISOString()
+            }, {
+              onConflict: 'form_id'
+            })
+            .select()
+            .single();
+          
+          if (fallbackError) {
+            this.handleError(fallbackError, 'Upsert form manifesto (fallback)');
+          }
+          
+          return this.transformManifestoFromDB(fallbackData);
+        } else {
+          this.handleError(error, 'Upsert form manifesto');
+        }
       }
 
       return this.transformManifestoFromDB(data);
@@ -1098,7 +1110,9 @@ export class SupabaseService {
       productVision: productVision || manifestoText.substring(0, 200), // Fallback to first 200 chars
       targetAudience,
       businessGoals,
-      conversationTone: 'friendly'
+      keyQuestionAreas: [],
+      conversationTone: 'friendly',
+      successMetrics: []
     };
 
     await this.upsertFormManifesto(formId, manifesto);
@@ -1114,7 +1128,9 @@ export class SupabaseService {
       productVision: dbManifesto.product_vision,
       targetAudience: dbManifesto.target_audience,
       businessGoals: dbManifesto.business_goals || [],
+      keyQuestionAreas: dbManifesto.key_question_areas || [],
       conversationTone: dbManifesto.conversation_tone || 'friendly',
+      successMetrics: dbManifesto.success_metrics || [], // Handle missing column gracefully
       createdAt: dbManifesto.created_at,
       updatedAt: dbManifesto.updated_at
     };

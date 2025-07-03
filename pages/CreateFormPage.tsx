@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useFormStore } from '../store/formStore';
 import { useAuthStore } from '../store/authStore';
 import { useConfigStore } from '../store/configStore';
-import { generateFormWithRetry } from '../lib/formGenerator';
+import { generateFormWithRetry, generateManifestoOnly } from '../lib/formGenerator';
 import { Button } from '../components/ui/Button';
 import { Textarea } from '../components/ui/Textarea';
 import Loader from '../components/Loader';
@@ -12,6 +12,7 @@ import ShareModal from '../components/ShareModal';
 import { FormSchema } from '../types';
 import FormPreview from '../components/FormPreview';
 import FormEditor from '../components/FormEditor';
+import { useToast } from '../components/ui/Toast';
 
 const pageVariants: Variants = {
   initial: { opacity: 0, y: 20 },
@@ -48,6 +49,7 @@ const CreateFormPage: React.FC = () => {
   const clearPendingForm = useFormStore((state) => state.clearPendingForm);
   const { user } = useAuthStore();
   const { examplePrompts, loadConfig } = useConfigStore();
+  const { addToast } = useToast();
 
   useEffect(() => {
     loadConfig();
@@ -91,6 +93,15 @@ const CreateFormPage: React.FC = () => {
       });
       
       if (result.success && result.form) {
+        // Now, generate the manifesto
+        const manifestoResult = await generateManifestoOnly(prompt);
+        if (manifestoResult.success) {
+          result.form.manifesto = manifestoResult.manifesto;
+          result.form.manifestoData = manifestoResult.manifestoData;
+        } else {
+          // Even if manifesto fails, we can proceed with the form
+          console.warn('Could not generate manifesto, but form was created.');
+        }
         setPreviewSchema(result.form);
       } else {
         setError(result.error || 'Failed to generate form. Please try again.');
@@ -143,6 +154,8 @@ const CreateFormPage: React.FC = () => {
       }
     }
   };
+
+
 
   const handleRetry = () => {
     setPreviewSchema(null);
@@ -302,6 +315,7 @@ const CreateFormPage: React.FC = () => {
                   >
                     Retry Publishing
                   </Button>
+
                   <Button 
                     onClick={clearPendingForm}
                     variant="ghost" 
