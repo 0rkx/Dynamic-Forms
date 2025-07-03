@@ -160,6 +160,7 @@ export class SupabaseService {
             product_vision,
             target_audience,
             business_goals,
+            key_question_areas,
             conversation_tone
           )
         `)
@@ -196,6 +197,7 @@ export class SupabaseService {
             product_vision,
             target_audience,
             business_goals,
+            key_question_areas,
             conversation_tone
           )
         `)
@@ -770,7 +772,7 @@ export class SupabaseService {
         productVision: manifesto.product_vision || '',
         targetAudience: manifesto.target_audience || '',
         businessGoals: manifesto.business_goals || [],
-        keyQuestionAreas: [], // Will be populated from other sources if needed
+        keyQuestionAreas: manifesto.key_question_areas || [], // Retrieve key_question_areas
         conversationTone: manifesto.conversation_tone || 'friendly'
       };
     }
@@ -1032,6 +1034,7 @@ export class SupabaseService {
           product_vision: manifesto.productVision,
           target_audience: manifesto.targetAudience,
           business_goals: manifesto.businessGoals,
+            key_question_areas: manifesto.keyQuestionAreas, // Added this line
           conversation_tone: manifesto.conversationTone,
           updated_at: new Date().toISOString()
         }, {
