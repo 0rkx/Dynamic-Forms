@@ -1,0 +1,6 @@
+{
+  "name": "Dynamic Forms",
+  "description": "An application that allows users to generate and preview AI-powered forms dynamically using Gemini for schema generation.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
