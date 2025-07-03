@@ -126,6 +126,7 @@ CREATE TABLE public.form_manifestos (
   product_vision TEXT,
   target_audience TEXT,
   business_goals TEXT[],
+  key_question_areas TEXT[], -- Added for storing key question areas
   conversation_tone TEXT DEFAULT 'friendly',
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
