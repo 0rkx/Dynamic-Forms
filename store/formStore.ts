@@ -91,6 +91,35 @@ export const useFormStore = create<FormState>((set, get) => ({
       const forms = await supabaseService.getForms(userId);
       console.log('loadForms: Loaded forms:', forms);
       
+      // CRITICAL FIX: Check for forms with manifestos that need repair
+      // This automatically repairs manifesto sync issues without requiring admin intervention
+      try {
+        const formsWithManifestos = forms.filter(form => 
+          form.manifesto || 
+          (form.manifestoData && form.manifestoData.productVision)
+        );
+        
+        if (formsWithManifestos.length > 0) {
+          console.log(`Found ${formsWithManifestos.length} forms with manifestos, checking synchronization...`);
+          
+          // Check one form to see if it needs repair
+          const formToCheck = formsWithManifestos[0];
+          const hasManifestoDataInDB = await supabaseService.checkUserManifestoExists(formToCheck.id);
+          
+          if (!hasManifestoDataInDB) {
+            console.log('Manifesto sync issue detected, performing automatic repair...');
+            // Batch repair all forms with manifestos
+            const repairResult = await supabaseService.repairManifestoSync();
+            console.log('Repair result:', repairResult);
+          } else {
+            console.log('Manifesto synchronization appears to be working correctly');
+          }
+        }
+      } catch (repairError) {
+        // Don't fail form loading if repair check fails
+        console.warn('Error checking/repairing manifestos:', repairError);
+      }
+      
       set({ 
         forms, 
         loading: false, 

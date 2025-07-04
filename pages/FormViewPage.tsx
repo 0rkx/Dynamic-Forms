@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useFormStore } from '../store/formStore';
-import { FormSchema, Question, QuestionType, AIBrainDecision } from '../types';
+import { FormSchema, Question, QuestionType } from '../types';
 import AnimatedQuestion from '../components/form/AnimatedQuestion';
 import { motion, Variants } from 'framer-motion';
 import { generateIntelligentFollowUp, createConversationContext } from '../lib/gemini';
-import { createFormBrain, FormBrain } from '../lib/formBrain';
+import { createSmartFormBrain } from '../lib/formBrainMigration';
 import { AlertCircle, Brain } from 'lucide-react';
 import { supabaseService } from '../lib/supabaseService';
 import { useToast } from '../components/ui/Toast';
@@ -39,7 +39,7 @@ const FormViewPage: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   // AI Brain state
-  const [formBrain, setFormBrain] = useState<FormBrain | null>(null);
+  const [formBrain, setFormBrain] = useState<any | null>(null);
   const [isAIThinking, setIsAIThinking] = useState(false);
   const [aiInsights, setAiInsights] = useState<string[]>([]);
   
@@ -104,8 +104,10 @@ const FormViewPage: React.FC = () => {
             
             // Initialize AI Brain if enabled
             if (foundForm.aiConfig?.enabled || foundForm.intelligentFollowUps) {
-              const brain = createFormBrain(foundForm);
-              setFormBrain(brain);
+              const brain = createSmartFormBrain(foundForm);
+              // We purposely don’t type this strictly so it can handle both brain versions
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              setFormBrain(brain as any);
             }
             
             addFormView(id); // Track form view for analytics
@@ -222,11 +224,13 @@ const FormViewPage: React.FC = () => {
     }
   };
 
-  const handleAIBrainDecision = async (decision: AIBrainDecision, currentQuestion: Question, value: any) => {
+  // Accept decisions from both the standard and enhanced brains
+  const handleAIBrainDecision = async (decision: any, currentQuestion: Question, value: any) => {
     console.log('AI Brain Decision:', decision);
     
     switch (decision.action) {
       case 'generate_followup':
+      case 'generate_contextual_followup':
         if (decision.nextQuestion) {
           // Insert AI-generated follow-up question
           const newQuestions = [...localQuestions];
@@ -408,9 +412,12 @@ const FormViewPage: React.FC = () => {
       totalFollowUpsShown < 10 &&
       currentFollowUpCount < 3 &&
       effectiveManifesto &&
-      value && 
-      typeof value === 'string' && 
-      value.length > 10 // Only generate follow-ups for substantial answers
+      value !== undefined && value !== null &&
+      (
+        (typeof value === 'string' && value.trim().length >= 3) ||
+        typeof value === 'number' ||
+        typeof value === 'boolean'
+      )
     ) {
       setIsLoadingFollowUp(true);
       try {
@@ -420,14 +427,15 @@ const FormViewPage: React.FC = () => {
           setConversationContexts(prev => ({ ...prev, [currentQuestion.id]: context }));
         }
 
-        const newHistoryEntry = { question: currentQuestion, answer: value };
+        const answerText = typeof value === 'string' ? value : String(value);
+        const newHistoryEntry = { question: currentQuestion, answer: answerText };
         context.conversationHistory.push(newHistoryEntry);
         
         console.log('🚀 Calling generateIntelligentFollowUp with:', {
           manifesto: effectiveManifesto?.substring(0, 100) + '...',
           context: context,
           currentQuestion: currentQuestion,
-          value: value,
+          value: answerText,
           answersCount: Object.keys(answers).length
         });
         
@@ -435,7 +443,7 @@ const FormViewPage: React.FC = () => {
           effectiveManifesto,
           context,
           currentQuestion,
-          value,
+          answerText,
           answers
         );
 
@@ -512,15 +520,31 @@ const FormViewPage: React.FC = () => {
     const resolveManifesto = async () => {
       if (!form) return;
       
-      // PRIMARY: Use the stored AI manifesto from the database (created during form generation)
-      // This is the high-quality, contextual manifesto that should always be used when available
-      if (form.manifesto && form.manifesto.trim().length > 50) {
+      // PRIMARY: Use the stored AI manifesto from the database whenever it exists
+      if (form.manifesto && form.manifesto.trim().length > 0) {
         console.log('✅ Using stored AI manifesto from form creation');
-        setResolvedManifesto(form.manifesto);
+        setResolvedManifesto(form.manifesto.trim());
         return;
       }
-      
-      // SECONDARY: If no stored manifesto exists and intelligent follow-ups are enabled, 
+
+      // SECONDARY: If we have structured manifesto data but no plain-text manifesto, convert it to text
+      if (form.manifestoData) {
+        const { productVision, targetAudience, businessGoals = [], keyQuestionAreas = [] } = form.manifestoData;
+        const manifestoTextParts: string[] = [];
+        if (productVision) manifestoTextParts.push(productVision);
+        if (targetAudience) manifestoTextParts.push(`Target Audience: ${targetAudience}`);
+        if (businessGoals.length) manifestoTextParts.push(`Business Goals: ${businessGoals.join(', ')}`);
+        if (keyQuestionAreas.length) manifestoTextParts.push(`Key Question Areas: ${keyQuestionAreas.join(', ')}`);
+        const manifestoText = manifestoTextParts.join('\n\n').trim();
+
+        if (manifestoText) {
+          console.log('✅ Reconstructed manifesto from structured data');
+          setResolvedManifesto(manifestoText);
+          return;
+        }
+      }
+ 
+      // TERTIARY: If no stored manifesto exists and intelligent follow-ups are enabled, 
       // generate a new AI manifesto using the same system used during form creation
       if (form.intelligentFollowUps) {
         try {

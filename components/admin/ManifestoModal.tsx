@@ -1,22 +1,24 @@
 import React, { useState, useEffect } from 'react';
-import { FormSchema } from '../../types';
+import { X, Lightbulb, Brain, Plus, Trash2 } from 'lucide-react';
+import { FormSchema, FormManifesto } from '../../types';
 import { Button } from '../ui/Button';
 import { Textarea } from '../ui/Textarea';
-import { X, Brain, Target, Users, Lightbulb } from 'lucide-react';
+import { Input } from '../ui/Input';
 
 interface ManifestoModalProps {
     form: FormSchema;
     onClose: () => void;
-    onSave: (manifesto: string, manifestoData: any) => void;
+  onSave: (manifestoText: string, manifestoData: Partial<FormManifesto>) => void;
 }
 
+type ConversationTone = 'friendly' | 'professional' | 'casual' | 'expert';
+
 const ManifestoModal: React.FC<ManifestoModalProps> = ({ form, onClose, onSave }) => {
-    const [manifestoForm, setManifestoForm] = useState({
+  const [manifestoData, setManifestoData] = useState({
         productVision: '',
         targetAudience: '',
-        coreValues: [''],
         keyQuestionAreas: [''],
-        successMetrics: ['']
+    conversationTone: 'friendly' as ConversationTone
     });
     const [isLoading, setIsLoading] = useState(false);
     
@@ -31,50 +33,34 @@ const ManifestoModal: React.FC<ManifestoModalProps> = ({ form, onClose, onSave }
     // Initialize form data from existing manifesto
     useEffect(() => {
         if (form.manifestoData) {
-            setManifestoForm(prev => ({
-                ...prev,
-                productVision: form.manifestoData!.productVision || '',
-                targetAudience: form.manifestoData!.targetAudience || '',
-                keyQuestionAreas: form.manifestoData!.keyQuestionAreas.length > 0 ? 
-                    form.manifestoData!.keyQuestionAreas : ['']
-            }));
+      setManifestoData({
+        productVision: form.manifestoData.productVision || '',
+        targetAudience: form.manifestoData.targetAudience || '',
+        keyQuestionAreas: form.manifestoData.keyQuestionAreas && 
+          form.manifestoData.keyQuestionAreas.length > 0 ? 
+          form.manifestoData.keyQuestionAreas : [''],
+        conversationTone: (form.manifestoData.conversationTone || 'friendly') as ConversationTone
+      });
         } else if (form.manifesto) {
+      // Parse existing text manifesto if no structured data
             const lines = form.manifesto.split('\n').filter(line => line.trim());
             const productVision = lines[0] || '';
             const targetAudienceLine = lines.find(line => line.startsWith('Target Audience:'));
-            const targetAudience = targetAudienceLine ? targetAudienceLine.replace('Target Audience:', '').trim() : '';
+      const targetAudience = targetAudienceLine ? 
+        targetAudienceLine.replace('Target Audience:', '').trim() : '';
             const keyAreasLine = lines.find(line => line.startsWith('Key Question Areas:'));
             const keyQuestionAreas = keyAreasLine ? 
-                keyAreasLine.replace('Key Question Areas:', '').split(',').map(area => area.trim()).filter(area => area) : 
-                [''];
+        keyAreasLine.replace('Key Question Areas:', '').split(',')
+          .map(area => area.trim()).filter(area => area) : [''];
             
-            setManifestoForm(prev => ({
-                ...prev,
+      setManifestoData({
                 productVision,
                 targetAudience,
-                keyQuestionAreas: keyQuestionAreas.length > 0 ? keyQuestionAreas : ['']
-            }));
+        keyQuestionAreas: keyQuestionAreas.length > 0 ? keyQuestionAreas : [''],
+        conversationTone: 'friendly'
+      });
         }
     }, [form.manifesto, form.manifestoData]);
-
-    const handleManifestoField = (field: string, value: string) => {
-        setManifestoForm(prev => ({ ...prev, [field]: value }));
-    };
-
-    const handleManifestoArrayField = (field: string, index: number, value: string) => {
-        setManifestoForm(prev => ({
-            ...prev,
-            [field]: (prev[field as keyof typeof prev] as string[]).map((item: string, i: number) => i === index ? value : item)
-        }));
-    };
-
-    const handleManifestoAddArrayField = (field: string) => {
-        setManifestoForm(prev => ({ ...prev, [field]: [...(prev[field as keyof typeof prev] as string[]), ''] }));
-    };
-
-    const handleManifestoRemoveArrayField = (field: string, index: number) => {
-        setManifestoForm(prev => ({ ...prev, [field]: (prev[field as keyof typeof prev] as string[]).filter((_, i: number) => i !== index) }));
-    };
 
     const handleGenerateAIManifesto = async () => {
         setIsLoading(true);
@@ -88,9 +74,6 @@ const ManifestoModal: React.FC<ManifestoModalProps> = ({ form, onClose, onSave }
                 if (q.options && q.options.length > 0) {
                     detail += ` with options: ${q.options.join(', ')}`;
                 }
-                if (q.placeholder) {
-                    detail += ` (placeholder: ${q.placeholder})`;
-                }
                 return detail;
             }).join('\n') || 'No questions defined yet';
             
@@ -103,106 +86,25 @@ Form Description: "${form.description || 'No description provided'}"
 Existing Questions:
 ${questionDetails}
 
-Based on this form structure and purpose, create a manifesto that will guide AI to ask relevant follow-up questions. Consider:
-- What insights would be most valuable to gather?
-- Who is the target audience based on the question types and content?
-- What business goals does this form serve?
-- What additional areas could be explored with follow-up questions?
-
-Focus on creating a manifesto that leverages the existing question structure to generate meaningful follow-ups.`;
+Based on this form structure and purpose, create a manifesto that will guide AI to ask relevant follow-up questions.`;
 
             console.log('🤖 Generating AI manifesto for form:', form.title);
             
             const result = await generateManifestoOnly(formPrompt);
             
-            if (result.success && (result.manifesto || result.manifestoData)) {
+      if (result.success && result.manifestoData) {
                 console.log('✅ AI manifesto generated successfully');
                 
-                // Use structured data from API if available, otherwise parse text
-                if (result.manifestoData) {
-                    setManifestoForm(prev => ({
-                        ...prev,
-                        productVision: result.manifestoData.productVision || prev.productVision,
-                        targetAudience: result.manifestoData.targetAudience || prev.targetAudience,
-                        keyQuestionAreas: result.manifestoData.keyQuestionAreas && result.manifestoData.keyQuestionAreas.length > 0 
-                            ? result.manifestoData.keyQuestionAreas 
-                            : prev.keyQuestionAreas
-                    }));
-                } else if (result.manifesto) {
-                    // Fallback: Parse the generated manifesto text to extract structured data
-                    const lines = result.manifesto.split('\n').filter(line => line.trim());
-                    
-                    // Try to extract structured information from the generated manifesto
-                    let productVision = '';
-                    let targetAudience = '';
-                    let businessGoals: string[] = [];
-                    let keyQuestionAreas: string[] = [];
-                    
-                    // Parse the manifesto text
-                    let currentSection = '';
-                    for (const line of lines) {
-                        if (line.includes('Vision:') || line.includes('Product Vision:')) {
-                            currentSection = 'vision';
-                            productVision = line.replace(/(Vision:|Product Vision:)/i, '').trim();
-                        } else if (line.includes('Audience:') || line.includes('Target Audience:')) {
-                            currentSection = 'audience';
-                            targetAudience = line.replace(/(Audience:|Target Audience:)/i, '').trim();
-                        } else if (line.includes('Goals:') || line.includes('Business Goals:')) {
-                            currentSection = 'goals';
-                            const goalText = line.replace(/(Goals:|Business Goals:)/i, '').trim();
-                            if (goalText) {
-                                businessGoals = goalText.split(',').map(g => g.trim()).filter(g => g);
-                            }
-                        } else if (line.includes('Areas:') || line.includes('Question Areas:') || line.includes('Key Areas:')) {
-                            currentSection = 'areas';
-                            const areaText = line.replace(/(Areas:|Question Areas:|Key Areas:)/i, '').trim();
-                            if (areaText) {
-                                keyQuestionAreas = areaText.split(',').map(a => a.trim()).filter(a => a);
-                            }
-                        } else if (line.trim() && currentSection) {
-                            // Continue adding to current section
-                            if (currentSection === 'vision' && !productVision) {
-                                productVision = line.trim();
-                            } else if (currentSection === 'audience' && !targetAudience) {
-                                targetAudience = line.trim();
-                            }
-                        }
-                    }
-                    
-                    // Fallback: if parsing didn't work well, use the first part as product vision
-                    if (!productVision && lines.length > 0) {
-                        productVision = lines[0];
-                    }
-                    
-                    // If we still don't have target audience, try to infer from questions
-                    if (!targetAudience) {
-                        targetAudience = "Users interested in " + (form.title?.toLowerCase() || "this service");
-                    }
-                    
-                    // If no key question areas were extracted, create some based on question types
-                    if (keyQuestionAreas.length === 0) {
-                        const questionTypes = form.questions?.map(q => q.type) || [];
-                        if (questionTypes.includes('rating')) keyQuestionAreas.push('satisfaction levels');
-                        if (questionTypes.includes('multiple-choice')) keyQuestionAreas.push('preferences');
-                        if (questionTypes.includes('textarea')) keyQuestionAreas.push('detailed insights');
-                        if (questionTypes.includes('email')) keyQuestionAreas.push('contact preferences');
-                        
-                        // Add generic areas if still empty
-                        if (keyQuestionAreas.length === 0) {
-                            keyQuestionAreas = ['user needs', 'preferences', 'expectations'];
-                        }
-                    }
-                    
-                    setManifestoForm(prev => ({
-                        ...prev,
-                        productVision: productVision || prev.productVision,
-                        targetAudience: targetAudience || prev.targetAudience,
-                        keyQuestionAreas: keyQuestionAreas.length > 0 ? keyQuestionAreas : prev.keyQuestionAreas
-                    }));
-                }
+        setManifestoData({
+          productVision: result.manifestoData.productVision || '',
+          targetAudience: result.manifestoData.targetAudience || '',
+          keyQuestionAreas: result.manifestoData.keyQuestionAreas && 
+            result.manifestoData.keyQuestionAreas.length > 0 ? 
+            result.manifestoData.keyQuestionAreas : [''],
+          conversationTone: (result.manifestoData.conversationTone || 'friendly') as ConversationTone
+        });
             } else {
                 console.warn('❌ AI manifesto generation failed:', result.error);
-                // Show user-friendly error message
                 alert('Failed to generate AI manifesto. Please try again or create one manually.');
             }
         } catch (error) {
@@ -213,17 +115,44 @@ Focus on creating a manifesto that leverages the existing question structure to 
         }
     };
 
+  const handleAddKeyArea = () => {
+    setManifestoData(prev => ({
+      ...prev,
+      keyQuestionAreas: [...prev.keyQuestionAreas, '']
+    }));
+  };
+
+  const handleRemoveKeyArea = (index: number) => {
+    setManifestoData(prev => ({
+      ...prev,
+      keyQuestionAreas: prev.keyQuestionAreas.filter((_, i) => i !== index)
+    }));
+  };
+
+  const handleKeyAreaChange = (index: number, value: string) => {
+    setManifestoData(prev => ({
+      ...prev,
+      keyQuestionAreas: prev.keyQuestionAreas.map((area, i) => 
+        i === index ? value : area
+      )
+    }));
+  };
+
     const handleSave = () => {
-        const manifestoText = manifestoForm.productVision + '\n\nTarget Audience: ' + manifestoForm.targetAudience;
-        const manifestoData = {
-            productVision: manifestoForm.productVision,
-            targetAudience: manifestoForm.targetAudience,
-            businessGoals: [],
-            keyQuestionAreas: manifestoForm.keyQuestionAreas.filter(area => area.trim()),
-            conversationTone: 'friendly' as const
-        };
-        
-        onSave(manifestoText, manifestoData);
+    // Create manifesto text for backwards compatibility
+    const manifestoText = `${manifestoData.productVision}\n\nTarget Audience: ${manifestoData.targetAudience}\n\nKey Question Areas: ${manifestoData.keyQuestionAreas.join(', ')}`;
+    
+    // Create structured data
+    const structuredData = {
+      productVision: manifestoData.productVision,
+      targetAudience: manifestoData.targetAudience,
+      keyQuestionAreas: manifestoData.keyQuestionAreas.filter(area => area.trim()),
+      conversationTone: manifestoData.conversationTone,
+      businessGoals: [], // Empty for now, can be extended later
+      successMetrics: [] // Empty for now, can be extended later
+    };
+    
+    onSave(manifestoText, structuredData);
         onClose();
     };
 
@@ -245,7 +174,7 @@ Focus on creating a manifesto that leverages the existing question structure to 
                     </Button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-6" style={{ maxHeight: 'calc(90vh - 140px)' }}>
+        <div className="p-6 overflow-y-auto max-h-[calc(90vh-130px)]">
                     <div className="space-y-6">
                         <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg p-4">
                             <div className="flex items-center justify-between">
@@ -266,84 +195,77 @@ Focus on creating a manifesto that leverages the existing question structure to 
                             </div>
                         </div>
 
-                        <div className="space-y-3">
-                            <div className="flex items-center gap-2">
-                                <Target className="h-4 w-4 text-neutral-600" />
-                                <label className="block text-sm font-medium text-gray-700">Product Vision *</label>
-                            </div>
+            <div>
+              <label htmlFor="product-vision" className="block text-sm font-medium text-neutral-700 mb-1">
+                Product Vision
+              </label>
                             <Textarea 
-                                value={manifestoForm.productVision} 
-                                onChange={e => handleManifestoField('productVision', e.target.value)} 
-                                placeholder="What is your product's core purpose and vision? What do you want to achieve with this form?"
+                id="product-vision"
+                placeholder="Describe the core purpose and goals of this form"
+                value={manifestoData.productVision}
+                onChange={(e) => setManifestoData(prev => ({ ...prev, productVision: e.target.value }))}
                                 rows={3}
-                                className="resize-none"
+                className="w-full"
                             />
                         </div>
 
-                        <div className="space-y-3">
-                            <div className="flex items-center gap-2">
-                                <Users className="h-4 w-4 text-neutral-600" />
-                                <label className="block text-sm font-medium text-gray-700">Target Audience *</label>
-                            </div>
+            <div>
+              <label htmlFor="target-audience" className="block text-sm font-medium text-neutral-700 mb-1">
+                Target Audience
+              </label>
                             <Textarea 
-                                value={manifestoForm.targetAudience} 
-                                onChange={e => handleManifestoField('targetAudience', e.target.value)} 
-                                placeholder="Who are your primary users? Describe their characteristics, needs, and context."
-                                rows={3}
-                                className="resize-none"
+                id="target-audience"
+                placeholder="Who is this form designed for?"
+                value={manifestoData.targetAudience}
+                onChange={(e) => setManifestoData(prev => ({ ...prev, targetAudience: e.target.value }))}
+                rows={2}
+                className="w-full"
                             />
                         </div>
 
-                        <div className="space-y-3">
-                            <label className="block text-sm font-medium text-gray-700">Key Question Areas</label>
-                            <p className="text-xs text-gray-500">Topics the AI should focus on when generating follow-up questions</p>
-                            {manifestoForm.keyQuestionAreas.map((area, i) => (
-                                <div key={i} className="flex items-center gap-2">
-                                    <input 
-                                        type="text" 
-                                        value={area} 
-                                        onChange={e => handleManifestoArrayField('keyQuestionAreas', i, e.target.value)} 
-                                        className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500" 
-                                        placeholder={'Key area ' + (i + 1)}
-                                    />
-                                    {manifestoForm.keyQuestionAreas.length > 1 && (
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium text-neutral-700">
+                  Key Question Areas
+                </label>
                                         <Button 
-                                            onClick={() => handleManifestoRemoveArrayField('keyQuestionAreas', i)} 
                                             variant="outline" 
                                             size="sm"
-                                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
-                                        >
-                                            ×
+                  onClick={handleAddKeyArea}
+                  className="flex items-center gap-1 h-7 text-xs"
+                >
+                  <Plus className="h-3 w-3" />
+                  Add Area
+                </Button>
+              </div>
+              <div className="space-y-2">
+                {manifestoData.keyQuestionAreas.map((area, index) => (
+                  <div key={index} className="flex gap-2 items-center">
+                    <Input
+                      placeholder={`Key question area ${index + 1}`}
+                      value={area}
+                      onChange={(e) => handleKeyAreaChange(index, e.target.value)}
+                      className="flex-1"
+                    />
+                    {manifestoData.keyQuestionAreas.length > 1 && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleRemoveKeyArea(index)}
+                        className="h-8 w-8 text-neutral-400 hover:text-red-500"
+                      >
+                        <Trash2 className="h-4 w-4" />
                                         </Button>
                                     )}
                                 </div>
                             ))}
-                            <Button 
-                                onClick={() => handleManifestoAddArrayField('keyQuestionAreas')} 
-                                variant="outline" 
-                                size="sm"
-                                className="mt-2"
-                            >
-                                + Add Area
-                            </Button>
+              </div>
+              <p className="text-xs text-neutral-500 mt-1">
+                Topics that follow-up questions should explore
+              </p>
                         </div>
 
-                        {(manifestoForm.productVision || manifestoForm.targetAudience) && (
-                            <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                                <h4 className="font-medium text-green-900 mb-3">Manifesto Preview</h4>
-                                <div className="space-y-2 text-sm">
-                                    {manifestoForm.productVision && (
-                                        <p><strong className="text-green-800">Vision:</strong> <span className="text-green-700">{manifestoForm.productVision}</span></p>
-                                    )}
-                                    {manifestoForm.targetAudience && (
-                                        <p><strong className="text-green-800">Audience:</strong> <span className="text-green-700">{manifestoForm.targetAudience}</span></p>
-                                    )}
-                                    {manifestoForm.keyQuestionAreas.filter(area => area.trim()).length > 0 && (
-                                        <p><strong className="text-green-800">Key Areas:</strong> <span className="text-green-700">{manifestoForm.keyQuestionAreas.filter(area => area.trim()).join(', ')}</span></p>
-                                    )}
-                                </div>
-                            </div>
-                        )}
+            {/* Removed Conversation Tone field UI (label, radio buttons, and surrounding container) */}
                     </div>
                 </div>
                 
@@ -357,7 +279,7 @@ Focus on creating a manifesto that leverages the existing question structure to 
                         </Button>
                         <Button 
                             onClick={handleSave}
-                            disabled={!manifestoForm.productVision.trim() || !manifestoForm.targetAudience.trim()}
+              disabled={!manifestoData.productVision.trim() || !manifestoData.targetAudience.trim()}
                             className="bg-blue-600 hover:bg-blue-700"
                         >
                             Save Manifesto

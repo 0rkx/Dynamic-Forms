@@ -46,9 +46,9 @@ const FormEditor: React.FC<FormEditorProps> = ({ schema, onSchemaChange }) => {
                 ...prev,
                 productVision: schema.manifestoData!.productVision || '',
                 targetAudience: schema.manifestoData!.targetAudience || '',
-                businessGoals: schema.manifestoData!.businessGoals.length > 0 ? 
+                businessGoals: schema.manifestoData!.businessGoals && schema.manifestoData!.businessGoals.length > 0 ?
                     schema.manifestoData!.businessGoals : [''],
-                keyQuestionAreas: schema.manifestoData!.keyQuestionAreas.length > 0 ? 
+                keyQuestionAreas: schema.manifestoData!.keyQuestionAreas && schema.manifestoData!.keyQuestionAreas.length > 0 ?
                     schema.manifestoData!.keyQuestionAreas : ['']
             }));
         } else if (schema.manifesto) {

@@ -736,25 +736,28 @@ export class SupabaseService {
    */
   private transformFormFromDB(dbForm: any): FormSchema {
     const settings = dbForm.settings || {};
-    const manifesto = dbForm.form_manifestos?.[0];
+    const manifestoRecord = Array.isArray(dbForm.form_manifestos) ? dbForm.form_manifestos[0] : dbForm.form_manifestos;
+    const manifesto = manifestoRecord as any;
     
     // Construct manifesto string from form_manifestos data
     let manifestoText = '';
     let manifestoData = undefined;
     
     if (manifesto) {
-      const parts = [];
-      if (manifesto.product_vision) parts.push(`Vision: ${manifesto.product_vision}`);
-      if (manifesto.target_audience) parts.push(`Audience: ${manifesto.target_audience}`);
-      if (manifesto.business_goals?.length) parts.push(`Goals: ${manifesto.business_goals.join(', ')}`);
-      manifestoText = parts.join('\n');
-      
+      const parts: string[] = [];
+      if (manifesto.product_vision) parts.push(manifesto.product_vision);
+      if (manifesto.target_audience) parts.push(`Target Audience: ${manifesto.target_audience}`);
+      if (manifesto.business_goals?.length) parts.push(`Business Goals: ${manifesto.business_goals.join(', ')}`);
+      if (manifesto.key_question_areas?.length) parts.push(`Key Question Areas: ${manifesto.key_question_areas.join(', ')}`);
+      if (manifesto.conversation_tone) parts.push(`Conversation Tone: ${manifesto.conversation_tone}`);
+      manifestoText = parts.join('\n\n');
+
       // Create structured manifesto data for editing
       manifestoData = {
         productVision: manifesto.product_vision || '',
         targetAudience: manifesto.target_audience || '',
         businessGoals: manifesto.business_goals || [],
-        keyQuestionAreas: manifesto.key_question_areas || [], // Retrieve key_question_areas
+        keyQuestionAreas: manifesto.key_question_areas || [],
         conversationTone: manifesto.conversation_tone || 'friendly'
       };
     }
@@ -1001,7 +1004,7 @@ export class SupabaseService {
   }
 
   /**
-   * Create or update form manifesto
+   * Create or update form manifesto - simplified implementation
    */
   async upsertFormManifesto(formId: string, manifesto: Omit<FormManifesto, 'id' | 'formId' | 'createdAt' | 'updatedAt'>): Promise<FormManifesto> {
     if (!formId) {
@@ -1009,16 +1012,18 @@ export class SupabaseService {
     }
 
     return this.retryOperation(async () => {
-      // First try with the new schema (including success_metrics)
+      console.log('Upserting form manifesto for form:', formId);
+      
+      // Single upsert operation to form_manifestos table
       const { data, error } = await supabase
         .from('form_manifestos')
         .upsert({
           form_id: formId,
           product_vision: manifesto.productVision,
           target_audience: manifesto.targetAudience,
-          business_goals: manifesto.businessGoals,
-          key_question_areas: manifesto.keyQuestionAreas,
-          conversation_tone: manifesto.conversationTone,
+          business_goals: manifesto.businessGoals || [],
+          key_question_areas: manifesto.keyQuestionAreas || [],
+          conversation_tone: manifesto.conversationTone || 'friendly',
           success_metrics: manifesto.successMetrics || [],
           updated_at: new Date().toISOString()
         }, {
@@ -1028,35 +1033,31 @@ export class SupabaseService {
         .single();
 
       if (error) {
-        // Check if it's a column doesn't exist error (old schema)
-        if (error.message?.includes('column') && error.message?.includes('success_metrics')) {
-          console.warn('Database schema appears to be outdated. Trying without success_metrics column.');
-          
-          // Retry without the success_metrics column for backwards compatibility
-          const { data: fallbackData, error: fallbackError } = await supabase
-            .from('form_manifestos')
-            .upsert({
-              form_id: formId,
-              product_vision: manifesto.productVision,
-              target_audience: manifesto.targetAudience,
-              business_goals: manifesto.businessGoals,
-              key_question_areas: manifesto.keyQuestionAreas,
-              conversation_tone: manifesto.conversationTone,
-              updated_at: new Date().toISOString()
-            }, {
-              onConflict: 'form_id'
-            })
-            .select()
-            .single();
-          
-          if (fallbackError) {
-            this.handleError(fallbackError, 'Upsert form manifesto (fallback)');
-          }
-          
-          return this.transformManifestoFromDB(fallbackData);
-        } else {
-          this.handleError(error, 'Upsert form manifesto');
-        }
+        this.handleError(error, 'Upsert form manifesto');
+      }
+
+      // Also update user_manifesto_context table in the same transaction for AI system
+      try {
+        await supabase
+          .from('user_manifesto_context')
+          .upsert({
+            form_id: formId,
+            product_vision: manifesto.productVision,
+            target_audience: manifesto.targetAudience,
+            business_goals: manifesto.businessGoals || [],
+            key_question_areas: manifesto.keyQuestionAreas || [],
+            conversation_tone: manifesto.conversationTone || 'friendly',
+            success_metrics: manifesto.successMetrics || [],
+            core_values: [], // Default empty array for core_values
+            updated_at: new Date().toISOString()
+          }, {
+            onConflict: 'form_id'
+          });
+        
+        console.log('Successfully synced manifesto to user_manifesto_context');
+      } catch (syncError) {
+        console.warn('Failed to sync to user_manifesto_context, but manifesto was saved:', syncError);
+        // Don't fail the main operation if sync fails
       }
 
       return this.transformManifestoFromDB(data);
@@ -1064,7 +1065,7 @@ export class SupabaseService {
   }
 
   /**
-   * Delete form manifesto
+   * Delete form manifesto from both tables
    */
   async deleteFormManifesto(formId: string): Promise<void> {
     if (!formId) {
@@ -1072,13 +1073,32 @@ export class SupabaseService {
     }
 
     return this.retryOperation(async () => {
-      const { error } = await supabase
+      console.log('Deleting form manifesto for form:', formId);
+      
+      // Delete from form_manifestos table
+      const { error: manifestoError } = await supabase
         .from('form_manifestos')
         .delete()
         .eq('form_id', formId);
 
-      if (error) {
-        this.handleError(error, 'Delete form manifesto');
+      if (manifestoError) {
+        this.handleError(manifestoError, 'Delete form manifesto');
+      }
+      
+      // Also delete from user_manifesto_context table
+      try {
+        const { error: contextError } = await supabase
+          .from('user_manifesto_context')
+          .delete()
+          .eq('form_id', formId);
+        
+        if (contextError) {
+          console.warn('Failed to delete from user_manifesto_context:', contextError);
+          // Don't fail the main operation if this fails
+        }
+      } catch (syncError) {
+        console.warn('Error deleting from user_manifesto_context:', syncError);
+        // Don't fail the main operation if this fails
       }
     });
   }
@@ -1092,6 +1112,7 @@ export class SupabaseService {
     let productVision = '';
     let targetAudience = '';
     let businessGoals: string[] = [];
+    let keyQuestionAreas: string[] = []; 
 
     for (const line of lines) {
       if (line.toLowerCase().startsWith('vision:')) {
@@ -1100,6 +1121,11 @@ export class SupabaseService {
         targetAudience = line.substring(9).trim();
       } else if (line.toLowerCase().startsWith('goals:')) {
         businessGoals = line.substring(6).split(',').map(goal => goal.trim());
+      } else if (line.toLowerCase().startsWith('key question areas:') || line.toLowerCase().startsWith('key areas:')) {
+        const areaText = line.toLowerCase().startsWith('key question areas:') ? 
+          line.substring(18).trim() : 
+          line.substring(10).trim();
+        keyQuestionAreas = areaText.split(',').map(area => area.trim());
       } else if (!productVision) {
         // If no explicit vision, use first line as vision
         productVision = line;
@@ -1110,7 +1136,7 @@ export class SupabaseService {
       productVision: productVision || manifestoText.substring(0, 200), // Fallback to first 200 chars
       targetAudience,
       businessGoals,
-      keyQuestionAreas: [],
+      keyQuestionAreas,
       conversationTone: 'friendly',
       successMetrics: []
     };
@@ -1130,10 +1156,103 @@ export class SupabaseService {
       businessGoals: dbManifesto.business_goals || [],
       keyQuestionAreas: dbManifesto.key_question_areas || [],
       conversationTone: dbManifesto.conversation_tone || 'friendly',
-      successMetrics: dbManifesto.success_metrics || [], // Handle missing column gracefully
+      successMetrics: dbManifesto.success_metrics || [],
       createdAt: dbManifesto.created_at,
       updatedAt: dbManifesto.updated_at
     };
+  }
+
+  /**
+   * Check if manifesto exists in user_manifesto_context
+   */
+  async checkUserManifestoExists(formId: string): Promise<boolean> {
+    if (!formId) {
+      throw new Error('Form ID is required');
+    }
+
+    return this.retryOperation(async () => {
+      const { data, error } = await supabase
+        .from('user_manifesto_context')
+        .select('id')
+        .eq('form_id', formId)
+        .maybeSingle();
+
+      if (error) {
+        console.warn('Error checking user manifesto context:', error);
+        return false;
+      }
+
+      return !!data;
+    });
+  }
+
+  /**
+   * Repair manifesto synchronization issues by syncing all manifestos to user_manifesto_context table
+   */
+  async repairManifestoSync(): Promise<{success: boolean; repaired: number; failed: number}> {
+    console.log('Starting manifesto sync repair operation');
+    
+    return this.retryOperation(async () => {
+      // Get all form manifestos
+      const { data: manifestos, error } = await supabase
+        .from('form_manifestos')
+        .select('*');
+
+      if (error) {
+        console.error('Error fetching manifestos for repair:', error);
+        throw new Error(`Repair failed: ${error.message}`);
+      }
+
+      console.log(`Found ${manifestos.length} manifestos to check/repair`);
+      
+      let repaired = 0;
+      let failed = 0;
+
+      // Process each manifesto and ensure it exists in user_manifesto_context
+      for (const manifesto of manifestos) {
+        try {
+          const { data: exists } = await supabase
+            .from('user_manifesto_context')
+            .select('id')
+            .eq('form_id', manifesto.form_id)
+            .maybeSingle();
+          
+          if (!exists) {
+            console.log(`Repairing manifesto for form ${manifesto.form_id}`);
+            
+            const { error: syncError } = await supabase
+              .from('user_manifesto_context')
+              .upsert({
+                form_id: manifesto.form_id,
+                product_vision: manifesto.product_vision,
+                target_audience: manifesto.target_audience,
+                business_goals: manifesto.business_goals || [],
+                key_question_areas: manifesto.key_question_areas || [],
+                conversation_tone: manifesto.conversation_tone || 'friendly',
+                success_metrics: manifesto.success_metrics || [],
+                core_values: [],
+                updated_at: new Date().toISOString()
+              }, {
+                onConflict: 'form_id'
+              });
+            
+            if (syncError) {
+              console.error(`Failed to repair manifesto for form ${manifesto.form_id}:`, syncError);
+              failed++;
+            } else {
+              console.log(`Repaired manifesto for form ${manifesto.form_id}`);
+              repaired++;
+            }
+          }
+        } catch (e) {
+          console.error(`Error processing form ${manifesto.form_id}:`, e);
+          failed++;
+        }
+      }
+
+      console.log(`Manifesto repair complete. Repaired: ${repaired}, Failed: ${failed}`);
+      return { success: true, repaired, failed };
+    });
   }
 }
 

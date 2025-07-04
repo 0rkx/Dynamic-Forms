@@ -1,5 +1,4 @@
 import { FormSchema } from '../types';
-import { createFormBrain } from './formBrain';
 import { createEnhancedFormBrain } from './enhancedFormBrain';
 
 /**
@@ -14,14 +13,10 @@ import { createEnhancedFormBrain } from './enhancedFormBrain';
  * This is the main function to use instead of directly calling createFormBrain
  */
 export function createSmartFormBrain(formSchema: FormSchema) {
-  // Use enhanced dual-context brain if intelligent follow-ups are enabled
-  if (formSchema.intelligentFollowUps) {
-    console.log('🧠 Using Enhanced Dual-Context FormBrain for:', formSchema.title);
-    return createEnhancedFormBrain(formSchema);
-  } else {
-    console.log('🤖 Using Standard FormBrain for:', formSchema.title);
-    return createFormBrain(formSchema);
-  }
+  // Always return the enhanced dual-context brain.
+  // Legacy FormBrain has been retired to simplify maintenance.
+  console.log('🧠 [Enhanced] FormBrain activated for:', formSchema.title);
+  return createEnhancedFormBrain(formSchema);
 }
 
 /**

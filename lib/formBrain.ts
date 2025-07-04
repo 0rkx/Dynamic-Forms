@@ -190,7 +190,7 @@ class FormBrain {
 
   private shouldGenerateFollowUp(question: Question, answer: any): boolean {
     if (question.isFollowUp || question.aiGenerated) return false;
-    if (typeof answer === 'string' && answer.length > 50) return true;
+    if (typeof answer === 'string' && answer.trim().length > 0) return true;
     if (['textarea', 'multiple-choice', 'rating'].includes(question.type)) {
       return Math.random() > 0.7;
     }

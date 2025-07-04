@@ -307,10 +307,17 @@ class EnhancedFormBrain {
     // Don't generate follow-ups for AI-generated questions
     if (question.isFollowUp || question.aiGenerated) return false;
     
-    // Don't generate if answer is too short or skipped
-    if (!answer || answer === 'skipped' || (typeof answer === 'string' && answer.length < 10)) {
+    // Skip if explicitly skipped
+    if (answer === 'skipped' || answer === null || answer === undefined) {
       return false;
     }
+
+    // Treat numeric or boolean answers as valid signals
+    if (typeof answer === 'number' || typeof answer === 'boolean') {
+      return true;
+    }
+
+    // Do not require a minimum length; any non-empty answer can be explored further
 
     // Check if user manifesto context suggests this is a key area
     if (this.userManifestoContext && this.userManifestoContext.keyQuestionAreas.length > 0) {

@@ -9,6 +9,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 import requests
 from dotenv import load_dotenv
+import re # Added for manifesto generation
 
 # Load environment variables
 load_dotenv()
@@ -81,6 +82,117 @@ def internal_error(error):
 @app.route('/api/health', methods=['GET'])
 def health_check():
     return jsonify({'status': 'healthy', 'service': 'dynamic-forms-api'})
+
+# CRITICAL FIX: Add new endpoint for database repair
+@app.route('/api/admin/repair-manifestos', methods=['POST'])
+@limiter.limit("5 per minute")
+def repair_manifestos():
+    """
+    Repair the manifesto synchronization between form_manifestos and user_manifesto_context tables
+    This endpoint helps fix the AI brain feature by ensuring all manifestos are properly synchronized
+    """
+    try:
+        # Get authentication header
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({
+                'error': 'Unauthorized',
+                'message': 'Valid authorization token required'
+            }), 401
+            
+        # Get service key from environment
+        service_key = os.getenv('SERVICE_ADMIN_KEY')
+        if not service_key:
+            return jsonify({
+                'error': 'Configuration Error',
+                'message': 'Service admin key not configured on server'
+            }), 500
+            
+        # Verify token matches service key
+        token = auth_header.split(' ')[1]
+        if token != service_key:
+            return jsonify({
+                'error': 'Forbidden',
+                'message': 'Invalid admin token'
+            }), 403
+        
+        # Get optional parameters
+        data = request.get_json() or {}
+        form_id = data.get('form_id')
+        force = data.get('force', False)
+        
+        # Run the repair script
+        import subprocess
+        import os.path
+        
+        # Get the path to the repair script
+        script_path = os.path.join(os.path.dirname(__file__), 'functions', 'repair-manifestos.js')
+        
+        if not os.path.exists(script_path):
+            return jsonify({
+                'error': 'Configuration Error', 
+                'message': 'Repair script not found'
+            }), 500
+        
+        # Set up the environment variables for the script
+        env = os.environ.copy()
+        env['SUPABASE_URL'] = os.getenv('SUPABASE_URL')
+        env['SUPABASE_SERVICE_KEY'] = os.getenv('SUPABASE_SERVICE_KEY')
+        
+        # Build the command
+        command = ['node', script_path]
+        if form_id:
+            command.append(f'--form-id={form_id}')
+        if force:
+            command.append('--force')
+        
+        # Execute the script
+        result = subprocess.run(
+            command,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        
+        if result.returncode != 0:
+            print(f"Error running repair script: {result.stderr}")
+            return jsonify({
+                'error': 'Repair Failed',
+                'message': result.stderr or 'Script execution failed',
+                'details': result.stdout
+            }), 500
+        
+        # Parse the output to extract summary information
+        stdout = result.stdout
+        summary = {
+            'success': 'completed successfully' in stdout,
+            'processed': extract_number(stdout, 'Processed:'),
+            'repaired': extract_number(stdout, 'Repaired:'),
+            'skipped': extract_number(stdout, 'Skipped:'),
+            'failed': extract_number(stdout, 'Failed:')
+        }
+        
+        return jsonify({
+            'success': True,
+            'summary': summary,
+            'details': stdout
+        })
+        
+    except Exception as e:
+        print(f"Error in repair_manifestos: {e}")
+        return jsonify({
+            'error': 'Server Error',
+            'message': str(e) or 'An unexpected error occurred during repair'
+        }), 500
+
+def extract_number(text, prefix):
+    """Extract a number from text that follows the given prefix"""
+    import re
+    match = re.search(rf"{prefix}\s*(\d+)", text)
+    if match:
+        return int(match.group(1))
+    return 0
 
 @app.route('/api/ai/generate-form', methods=['POST'])
 @limiter.limit("10 per minute, 100 per hour")
@@ -1247,125 +1359,181 @@ def generate_manifesto():
         prompt = data.get('prompt', '').strip()
         
         system_prompt = """
-You are a strategic business consultant. Create a comprehensive manifesto for intelligent form follow-up questions.
+You are a strategic business consultant. Create a concise, focused manifesto to guide intelligent form follow-up questions.
 
 Analyze the form description and generate a structured manifesto that includes:
 
-1. **Product Vision**: The core purpose and strategic goals (2-3 sentences)
+1. **Product Vision**: The core purpose and strategic goals (1-2 sentences)
 2. **Target Audience**: Who this form serves (1-2 sentences)
-3. **Business Goals**: 3-5 specific, actionable business objectives
-4. **Key Question Areas**: 3-7 topic areas for intelligent follow-up questions
-5. **Conversation Tone**: Communication style (friendly, professional, etc.)
+3. **Key Question Areas**: 3-5 topic areas for intelligent follow-up questions
+4. **Conversation Tone**: Either "friendly", "professional", "casual", or "expert" based on the context
 
-The manifesto should guide AI to ask strategic follow-up questions that:
-- Gather insights beyond basic form responses
-- Align with business objectives
-- Provide actionable data for decision-making
-- Feel natural and conversational
+The manifesto should guide AI to ask strategic follow-up questions that provide deeper insights beyond the basic form responses.
 
-Return a JSON object:
-```json
+Return a JSON object with this exact structure:
 {
-  "manifesto": "Complete manifesto text for display",
   "manifestoData": {
     "productVision": "Strategic vision statement",
     "targetAudience": "Description of target users",
-    "businessGoals": ["Goal 1", "Goal 2", "Goal 3"],
     "keyQuestionAreas": ["Area 1", "Area 2", "Area 3"],
-    "conversationTone": "friendly|professional|casual|formal"
+    "conversationTone": "friendly|professional|casual|expert"
   }
 }
-```
 """
         
         # Prepare request to Gemini API
         gemini_url = f"{GEMINI_BASE_URL}/gemini-2.0-flash-exp:generateContent"
+        
         headers = {
             'Content-Type': 'application/json',
+            'x-goog-api-key': GEMINI_API_KEY
         }
         
-        payload = {
-            'contents': [{
-                'parts': [{
-                    'text': prompt
-                }]
-            }],
-            'systemInstruction': {
-                'parts': [{
-                    'text': system_prompt
-                }]
+        generation_config = {
+            "temperature": 0.4,
+            "topP": 0.8,
+            "topK": 40
+        }
+        
+        safety_settings = [
+            {
+                "category": "HARM_CATEGORY_HARASSMENT",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
             },
-            'generationConfig': {
-                'responseMimeType': 'application/json',
-                'temperature': 0.7,
-                'topP': 0.8
+            {
+                "category": "HARM_CATEGORY_HATE_SPEECH",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+            },
+            {
+                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+            },
+            {
+                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
             }
+        ]
+        
+        data = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": prompt}]
+                }
+            ],
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
+            "generationConfig": generation_config,
+            "safetySettings": safety_settings
         }
         
-        # Make request to Gemini API
-        response = requests.post(
-            f"{gemini_url}?key={GEMINI_API_KEY}",
-            headers=headers,
-            json=payload,
-            timeout=20
-        )
+        response = requests.post(gemini_url, headers=headers, json=data)
         
         if response.status_code != 200:
+            print(f"Gemini API error: {response.status_code}")
+            print(response.text)
             return jsonify({
-                'error': 'AI Service Error',
-                'message': 'Failed to generate manifesto'
+                'error': 'AI Generation Failed',
+                'message': f'Gemini API returned status code {response.status_code}'
             }), 500
         
         result = response.json()
         
-        if 'candidates' in result and result['candidates']:
-            content = result['candidates'][0]['content']['parts'][0]['text']
-            try:
-                parsed_content = json.loads(content)
-                
-                # Ensure required fields exist
-                if 'manifestoData' not in parsed_content:
-                    parsed_content['manifestoData'] = {}
-                
-                # Validate manifestoData structure
-                manifesto_data = parsed_content['manifestoData']
-                if 'productVision' not in manifesto_data:
-                    manifesto_data['productVision'] = 'Understanding user needs and providing valuable assistance'
-                if 'targetAudience' not in manifesto_data:
-                    manifesto_data['targetAudience'] = 'Users seeking information and assistance'
-                if 'businessGoals' not in manifesto_data or not isinstance(manifesto_data['businessGoals'], list):
-                    manifesto_data['businessGoals'] = ['understand user needs', 'provide value', 'gather insights']
-                if 'keyQuestionAreas' not in manifesto_data or not isinstance(manifesto_data['keyQuestionAreas'], list):
-                    manifesto_data['keyQuestionAreas'] = ['user needs', 'preferences', 'goals']
-                if 'conversationTone' not in manifesto_data:
-                    manifesto_data['conversationTone'] = 'friendly'
-                
-                # Create manifesto text if not provided
-                if 'manifesto' not in parsed_content or not parsed_content['manifesto']:
-                    manifesto_text = f"{manifesto_data['productVision']}\n\nTarget Audience: {manifesto_data['targetAudience']}"
-                    if manifesto_data['businessGoals']:
-                        manifesto_text += f"\n\nBusiness Goals: {', '.join(manifesto_data['businessGoals'])}"
-                    if manifesto_data['keyQuestionAreas']:
-                        manifesto_text += f"\n\nKey Question Areas: {', '.join(manifesto_data['keyQuestionAreas'])}"
-                    parsed_content['manifesto'] = manifesto_text
-                
-                return jsonify(parsed_content)
-                
-            except json.JSONDecodeError:
-                return jsonify({
-                    'error': 'Invalid AI Response',
-                    'message': 'AI returned invalid JSON'
-                }), 500
+        if 'candidates' not in result or not result['candidates']:
+            return jsonify({
+                'error': 'No Results',
+                'message': 'The AI model did not return any results'
+            }), 500
+            
+        candidate = result['candidates'][0]
+        if 'content' not in candidate or 'parts' not in candidate['content']:
+            return jsonify({
+                'error': 'Invalid Response',
+                'message': 'The AI model returned an invalid response structure'
+            }), 500
+            
+        parts = candidate['content']['parts']
+        if not parts:
+            return jsonify({
+                'error': 'Empty Response',
+                'message': 'The AI model returned an empty response'
+            }), 500
+            
+        text_response = parts[0]['text']
         
+        # Extract JSON from text response
+        try:
+            # Find JSON in the response
+            json_match = re.search(r'\{[\s\S]*\}', text_response)
+            if json_match:
+                json_str = json_match.group(0)
+                manifesto_json = json.loads(json_str)
+                
+                # Create a response with both text and structured data
+                response_data = {
+                    'success': True,
+                    'manifestoData': manifesto_json.get('manifestoData', {})
+                }
+                
+                # Generate a text manifesto for backward compatibility
+                try:
+                    manifesto_text = f"{manifesto_json['manifestoData']['productVision']}\n\n"
+                    manifesto_text += f"Target Audience: {manifesto_json['manifestoData']['targetAudience']}\n\n"
+                    manifesto_text += f"Key Question Areas: {', '.join(manifesto_json['manifestoData']['keyQuestionAreas'])}"
+                    response_data['manifesto'] = manifesto_text
+                except KeyError:
+                    # If missing fields, create a simpler version
+                    response_data['manifesto'] = text_response
+                
+                return jsonify(response_data)
+            else:
+                # No JSON found, try to parse as best we can
+                lines = text_response.split('\n')
+                vision = ""
+                audience = ""
+                key_areas = []
+                
+                for line in lines:
+                    if 'product vision' in line.lower() or 'vision:' in line.lower():
+                        vision = line.split(':', 1)[1].strip() if ':' in line else line.strip()
+                    elif 'target audience' in line.lower() or 'audience:' in line.lower():
+                        audience = line.split(':', 1)[1].strip() if ':' in line else line.strip()
+                    elif 'key question' in line.lower() or 'key area' in line.lower():
+                        areas = line.split(':', 1)[1].strip() if ':' in line else line.strip()
+                        key_areas = [area.strip() for area in areas.split(',')]
+                
+                manifesto_data = {
+                    'productVision': vision or text_response[:100],
+                    'targetAudience': audience or 'Form users',
+                    'keyQuestionAreas': key_areas or ['user needs', 'satisfaction', 'expectations'],
+                    'conversationTone': 'friendly'
+                }
+                
+                return jsonify({
+                    'success': True,
+                    'manifesto': text_response,
+                    'manifestoData': manifesto_data
+                })
+        except Exception as e:
+            print(f"Error parsing JSON response: {e}")
+            print(f"Response text: {text_response}")
+            
+            # Return the raw text as a fallback
         return jsonify({
-            'error': 'No AI Response',
-            'message': 'AI did not return a response'
-        }), 500
+                'success': True,
+                'manifesto': text_response,
+                'manifestoData': {
+                    'productVision': text_response[:100],
+                    'targetAudience': 'Form users',
+                    'keyQuestionAreas': ['user needs', 'satisfaction', 'expectations'],
+                    'conversationTone': 'friendly'
+                }
+            })
     
     except Exception as e:
+        print(f"Error in generate_manifesto: {e}")
         return jsonify({
             'error': 'Server Error',
-            'message': 'An unexpected error occurred'
+            'message': 'An unexpected error occurred while generating the manifesto'
         }), 500
 
 @app.route('/api/ai/analyze-dual-context-conversation', methods=['POST'])

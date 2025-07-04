@@ -1,0 +1,12 @@
+{
+  "name": "dynamic-forms-functions",
+  "version": "1.0.0",
+  "description": "Helper functions for Dynamic Forms backend",
+  "main": "repair-manifestos.js",
+  "scripts": {
+    "repair": "node repair-manifestos.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.38.4"
+  }
+} 
