@@ -1,0 +1,3 @@
+name = "ai"
+# Make the function publicly callable while migrating
+verify_jwt = false 

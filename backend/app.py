@@ -11,6 +11,31 @@ import requests
 from dotenv import load_dotenv
 import re # Added for manifesto generation
 
+# Prompt helper: build prompt for manifesto-aligned question
+def build_manifesto_question_prompt(manifesto_context, conversation_history):
+    """Create a prompt instructing the LLM to produce a strategic question
+    aligned with the provided manifesto context. Replaces the old client-side
+    prompt assembly so that proprietary phrasing stays on the server."""
+
+    product_vision = manifesto_context.get('productVision', '')
+    target_audience = manifesto_context.get('targetAudience', '')
+    business_goals = ', '.join(manifesto_context.get('businessGoals', []))
+    key_question_areas = ', '.join(manifesto_context.get('keyQuestionAreas', []))
+
+    history_text = ' | '.join(conversation_history or [])
+
+    prompt = (
+        "Based on this product manifesto, generate a strategic question that would help understand the user's needs:\n\n"
+        f"Product Vision: {product_vision}\n"
+        f"Target Audience: {target_audience}\n"
+        f"Business Goals: {business_goals}\n"
+        f"Key Question Areas: {key_question_areas}\n\n"
+        f"Previous conversation context: {history_text}\n\n"
+        "Generate a question that directly serves the business goals and uncovers insights about the target audience."
+    )
+
+    return prompt
+
 # Load environment variables
 load_dotenv()
 
@@ -1056,6 +1081,74 @@ Please analyze these responses and provide insights.
 # DUAL-CONTEXT SYSTEM ENDPOINTS
 # =============================================
 
+# Helper: Build a rich context prompt from manifesto & form context
+
+def build_context_prompt(manifesto_context, form_context, current_question, user_answer, trigger_reason):
+    """Construct the context prompt that was previously built in the frontend.
+
+    The prompt combines product manifesto, aggregated form insights and the current
+    conversation state so that the LLM can generate a high-quality follow-up
+    question. All inputs are simple python dicts mirroring the structure sent by
+    the React client.
+    """
+    product_vision = manifesto_context.get('productVision', '')
+    target_audience = manifesto_context.get('targetAudience', '')
+    core_values = ', '.join(manifesto_context.get('coreValues', []))
+    business_goals = ', '.join(manifesto_context.get('businessGoals', []))
+    key_question_areas = ', '.join(manifesto_context.get('keyQuestionAreas', []))
+    conversation_tone = manifesto_context.get('conversationTone', 'friendly')
+
+    prompt = (
+        "You are an expert product strategist conducting a conversation to deeply "
+        "understand the user's product needs.\n\n"
+        "PRODUCT CONTEXT (User Manifesto):\n"
+        f"- Product Vision: {product_vision}\n"
+        f"- Target Audience: {target_audience}\n"
+        f"- Core Values: {core_values}\n"
+        f"- Business Goals: {business_goals}\n"
+        f"- Key Question Areas: {key_question_areas}\n"
+        f"- Conversation Tone: {conversation_tone}\n\n"
+        "CONVERSATION CONTEXT (Previous Insights):"
+    )
+
+    if form_context and form_context.get('totalEntries', 0) > 0:
+        top_themes = ', '.join([t.get('theme') for t in form_context.get('topThemes', [])])
+        common_pains = ', '.join(form_context.get('commonUserPains', []))
+        product_insights = ', '.join(form_context.get('productInsights', []))
+        successful_types = ', '.join(form_context.get('successfulQuestionTypes', []))
+        prompt += (
+            f"\n- Total conversations analyzed: {form_context.get('totalEntries', 0)}"
+            f"\n- Top themes from previous users: {top_themes}"
+            f"\n- Common user pain points: {common_pains}"
+            f"\n- Product insights discovered: {product_insights}"
+            f"\n- Successful question types: {successful_types}"
+        )
+    else:
+        prompt += "\n- This is a new form - no previous conversation data available"
+
+    prompt += (
+        "\n\nCURRENT SITUATION:"
+        f"\n- The user just answered: \"{current_question.get('label', '')}\""
+        f"\n- Their response was: \"{user_answer}\""
+        f"\n- Trigger reason: {trigger_reason}\n\n"
+        "INSTRUCTIONS:"
+        "\nGenerate a follow-up question that:"
+        "\n1. DIRECTLY builds on their specific answer"
+        "\n2. Aligns with the product vision and business goals"
+        "\n3. Avoids topics already covered by previous users (if any)"
+        "\n4. Uses the specified conversation tone"
+        "\n5. Aims to uncover deep product insights"
+        "\n6. Is genuinely curious and not robotic\n\n"
+        "The question should feel like it's coming from someone who:"
+        "\n- Really understands their product space"
+        "\n- Is genuinely interested in their specific situation"
+        "\n- Has the context to ask intelligent follow-ups"
+        "\n- Knows what insights would be most valuable\n\n"
+        "Generate a specific, contextual question that would make the user think \"Wow, this person really gets it.\""
+    )
+
+    return prompt
+
 @app.route('/api/ai/generate-dual-context-question', methods=['POST'])
 @limiter.limit("15 per minute, 150 per hour")
 def generate_dual_context_question():
@@ -1072,7 +1165,7 @@ def generate_dual_context_question():
             }), 400
         
         data = request.get_json()
-        required_fields = ['contextPrompt', 'currentQuestion', 'userAnswer', 'manifestoContext']
+        required_fields = ['currentQuestion', 'userAnswer', 'manifestoContext']
         
         for field in required_fields:
             if not data or field not in data:
@@ -1081,12 +1174,22 @@ def generate_dual_context_question():
                     'message': f'{field} is required'
                 }), 400
         
-        context_prompt = data.get('contextPrompt', '').strip()
         current_question = data.get('currentQuestion', {})
         user_answer = data.get('userAnswer', '').strip()
         manifesto_context = data.get('manifestoContext', {})
         form_context = data.get('formContext', {})
         trigger_reason = data.get('triggerReason', 'user_interest')
+
+        # Build context prompt server-side if the client did not send it (preferred)
+        context_prompt = (data.get('contextPrompt') or '').strip()
+        if not context_prompt:
+            context_prompt = build_context_prompt(
+                manifesto_context,
+                form_context,
+                current_question,
+                user_answer,
+                trigger_reason
+            )
         
         if len(user_answer) < 5:
             return jsonify({
@@ -1246,13 +1349,26 @@ def generate_manifesto_question():
             }), 400
         
         data = request.get_json()
-        if not data or 'prompt' not in data:
-            return jsonify({
-                'error': 'Missing Data',
-                'message': 'Prompt is required'
-            }), 400
+        if not data:
+            return jsonify({'error': 'Missing Data', 'message': 'Request body required'}), 400
+
+        # New preferred inputs
+        manifesto_context = data.get('manifestoContext')
+        conversation_history = data.get('conversationHistory', [])
+
+        if manifesto_context:
+            prompt = build_manifesto_question_prompt(manifesto_context, conversation_history)
+        else:
+            # Backward compatibility – expect raw prompt string
+            if 'prompt' not in data:
+                return jsonify({'error': 'Missing Data', 'message': 'manifestoContext or prompt is required'}), 400
+            prompt = data.get('prompt', '').strip()
         
-        prompt = data.get('prompt', '').strip()
+        if len(prompt) < 5:
+            return jsonify({
+                'error': 'Invalid Prompt',
+                'message': 'Prompt must be at least 5 characters long'
+            }), 400
         
         system_prompt = """
 You are a strategic product consultant. Generate a single, high-value question that directly serves the manifesto's business goals.
@@ -1652,6 +1768,199 @@ Return JSON:
             'insights': ['Analysis unavailable - server error'],
             'recommendations': ['Try again later']
         })
+
+@app.route('/api/ai/analyze-manifesto-responses', methods=['POST'])
+@limiter.limit("10 per minute, 100 per hour")
+def analyze_manifesto_responses():
+    """
+    New Analysis Brain - Manifesto-aware response analysis
+    Provides actionable insights focusing on what people like/dislike
+    """
+    try:
+        # Validate request
+        if not request.is_json:
+            return jsonify({
+                'error': 'Invalid Content-Type',
+                'message': 'Request must be JSON'
+            }), 400
+        
+        data = request.get_json()
+        if not data or 'formSchema' not in data or 'responses' not in data:
+            return jsonify({
+                'error': 'Missing Data',
+                'message': 'Form schema and responses are required'
+            }), 400
+        
+        form_schema = data.get('formSchema', {})
+        responses = data.get('responses', [])
+        
+        if not responses:
+            return jsonify({
+                'error': 'No Responses',
+                'message': 'At least one response is required for analysis'
+            }), 400
+        
+        # Extract manifesto context
+        manifesto = form_schema.get('manifesto', '')
+        manifesto_data = form_schema.get('manifestoData', {})
+        
+        # Build manifesto context
+        manifesto_context = ""
+        if manifesto:
+            manifesto_context = f"MANIFESTO: {manifesto}\n\n"
+        elif manifesto_data:
+            if manifesto_data.get('productVision'):
+                manifesto_context += f"PRODUCT VISION: {manifesto_data['productVision']}\n"
+            if manifesto_data.get('targetAudience'):
+                manifesto_context += f"TARGET AUDIENCE: {manifesto_data['targetAudience']}\n"
+            if manifesto_data.get('keyQuestionAreas'):
+                manifesto_context += f"KEY AREAS: {', '.join(manifesto_data['keyQuestionAreas'])}\n"
+            manifesto_context += "\n"
+        
+        # Enhanced system prompt for manifesto-aware analysis
+        system_prompt = f"""
+You are an expert product strategist and user insights analyst. Your job is to analyze user responses against the product manifesto and provide actionable insights.
+
+{manifesto_context}
+
+**ANALYSIS FRAMEWORK:**
+1. **What People Like**: Identify specific aspects users appreciate and enjoy
+2. **What People Dislike**: Identify pain points, frustrations, and negative experiences
+3. **Actionable Insights**: Provide specific, implementable recommendations
+4. **Priority Actions**: Suggest concrete next steps based on the manifesto goals
+
+**IMPORTANT GUIDELINES:**
+- Focus on insights that align with the manifesto and product vision
+- Provide specific, actionable recommendations (not generic advice)
+- Prioritize insights that have the highest impact on user experience
+- Connect feedback to the manifesto goals and target audience
+- Be concise and practical
+
+Return a JSON object with this structure:
+{{
+  "overview": {{
+    "totalResponses": number,
+    "manifestoAlignment": "high" | "medium" | "low",
+    "topPriority": string
+  }},
+  "whatPeopleLike": [
+    {{
+      "insight": string,
+      "evidence": string[],
+      "impact": "high" | "medium" | "low",
+      "manifestoConnection": string
+    }}
+  ],
+  "whatPeopleDislike": [
+    {{
+      "problem": string,
+      "evidence": string[],
+      "impact": "high" | "medium" | "low",
+      "manifestoConnection": string
+    }}
+  ],
+  "actionableInsights": [
+    {{
+      "title": string,
+      "description": string,
+      "action": string,
+      "priority": "high" | "medium" | "low",
+      "effort": "low" | "medium" | "high",
+      "expectedImpact": string
+    }}
+  ],
+  "recommendedActions": [
+    {{
+      "action": string,
+      "reason": string,
+      "timeframe": string,
+      "resources": string[],
+      "success_metric": string
+    }}
+  ]
+}}
+
+Focus on insights that help achieve the manifesto goals and serve the target audience better.
+"""
+        
+        # Prepare context for analysis
+        context = f"""
+{manifesto_context}
+
+Form Schema:
+{json.dumps(form_schema, indent=2)}
+
+User Responses to Analyze:
+{json.dumps(responses, indent=2)}
+
+Please analyze these responses against the manifesto and provide actionable insights focused on what people like/dislike and concrete next steps.
+"""
+        
+        # Prepare request to Gemini API
+        gemini_url = f"{GEMINI_BASE_URL}/gemini-2.0-flash-exp:generateContent"
+        headers = {
+            'Content-Type': 'application/json',
+        }
+        
+        payload = {
+            'contents': [{
+                'parts': [{
+                    'text': context
+                }]
+            }],
+            'systemInstruction': {
+                'parts': [{
+                    'text': system_prompt
+                }]
+            },
+            'generationConfig': {
+                'responseMimeType': 'application/json'
+            }
+        }
+        
+        # Make request to Gemini API
+        response = requests.post(
+            f"{gemini_url}?key={GEMINI_API_KEY}",
+            headers=headers,
+            json=payload,
+            timeout=30
+        )
+        
+        if response.status_code == 429:
+            return jsonify({
+                'error': 'Rate Limit Exceeded',
+                'message': 'AI service is currently busy. Please try again in a few moments.'
+            }), 429
+        
+        if response.status_code != 200:
+            return jsonify({
+                'error': 'AI Service Error',
+                'message': 'Failed to analyze responses. Please try again.'
+            }), 500
+        
+        result = response.json()
+        
+        if 'candidates' in result and result['candidates']:
+            content = result['candidates'][0]['content']['parts'][0]['text']
+            try:
+                analysis = json.loads(content)
+                return jsonify(analysis)
+            except json.JSONDecodeError:
+                return jsonify({
+                    'error': 'Invalid AI Response',
+                    'message': 'AI returned invalid response format'
+                }), 500
+        else:
+            return jsonify({
+                'error': 'No AI Response',
+                'message': 'AI did not return a response'
+            }), 500
+    
+    except Exception as e:
+        return jsonify({
+            'error': 'Server Error',
+            'message': 'An unexpected error occurred during analysis'
+        }), 500
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))

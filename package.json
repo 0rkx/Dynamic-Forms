@@ -10,6 +10,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "setup:backend": "cd backend && pip install -r requirements.txt",
+    "prepare:deploy": "node scripts/prepare-deployment.js",
     "lint": "echo 'Add linting script here'",
     "test": "echo 'Add testing script here'"
   },
@@ -25,6 +26,7 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.23.1",
     "recharts": "^2.12.7",
+    "supabase": "^2.30.4",
     "tailwind-merge": "^2.3.0",
     "zod": "^3.25.67",
     "zustand": "^4.5.2"
@@ -33,10 +35,11 @@
     "@types/node": "^22.14.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
-    "typescript": "~5.7.2",
-    "vite": "^6.2.0",
+    "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.17",
     "postcss": "^8.4.33",
-    "tailwindcss": "^3.4.4"
+    "tailwindcss": "^3.4.4",
+    "typescript": "~5.7.2",
+    "vite": "^6.2.0"
   }
 }

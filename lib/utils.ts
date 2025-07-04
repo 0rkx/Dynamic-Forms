@@ -315,51 +315,103 @@ if (typeof document !== 'undefined') {
 /**
  * Generates a secure random ID for forms
  * Format: form_[12 character secure random string]
- * Uses a combination of timestamp, random values, and Base62 encoding
- * for better collision resistance and readability
  */
 export function generateFormId(): string {
   // Use crypto.getRandomValues for better randomness if available
-  const getRandomBytes = () => {
+  const getRandomBytes = (length: number) => {
     if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-      const array = new Uint8Array(8);
+      const array = new Uint8Array(length);
       crypto.getRandomValues(array);
       return Array.from(array);
     } else {
       // Fallback for environments without crypto API
-      return Array.from({ length: 8 }, () => Math.floor(Math.random() * 256));
+      return Array.from({ length }, () => Math.floor(Math.random() * 256));
     }
   };
 
   // Base62 alphabet (alphanumeric, URL-safe)
   const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
   
-  // Get timestamp-based entropy (last 6 digits to avoid overflow)
-  const timestamp = Date.now() % 1000000;
+  // Generate high-entropy ID using timestamp + random data
+  const timestamp = Date.now();
+  const randomBytes = getRandomBytes(16); // More random bytes for better uniqueness
   
-  // Get random bytes
-  const randomBytes = getRandomBytes();
+  // Create a unique seed by combining timestamp with random data
+  let seed = timestamp;
+  for (let i = 0; i < randomBytes.length; i++) {
+    seed = (seed * 256 + randomBytes[i]) % Number.MAX_SAFE_INTEGER;
+  }
   
-  // Combine timestamp and random data
-  const combined = timestamp * 256 + randomBytes.reduce((acc, byte) => acc ^ byte, 0);
-  
-  // Convert to base62
+  // Convert to base62 with guaranteed minimum length
   let result = '';
-  let num = combined;
+  let num = seed;
   
-  // Generate at least 8 characters
-  for (let i = 0; i < 8; i++) {
+  // Generate at least 12 characters for better uniqueness
+  while (result.length < 12 || num > 0) {
     result = alphabet[num % 62] + result;
     num = Math.floor(num / 62);
   }
   
-  // Add additional random characters for extra security
-  const extraBytes = getRandomBytes().slice(0, 4);
-  for (const byte of extraBytes) {
-    result += alphabet[byte % 62];
-  }
+  // Add additional random suffix for extra uniqueness
+  const suffix = getRandomBytes(4).map(byte => alphabet[byte % 62]).join('');
+  result += suffix;
   
   return `form_${result}`;
+}
+
+/**
+ * Generates an extremely secure form ID with maximum entropy
+ * Used when regular ID generation fails due to conflicts
+ */
+export function generateSecureFormId(): string {
+  const getRandomBytes = (length: number) => {
+    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+      const array = new Uint8Array(length);
+      crypto.getRandomValues(array);
+      return Array.from(array);
+    } else {
+      return Array.from({ length }, () => Math.floor(Math.random() * 256));
+    }
+  };
+
+  const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+  
+  // Use multiple entropy sources
+  const timestamp = Date.now();
+  const performanceNow = typeof performance !== 'undefined' ? performance.now() : Math.random() * 1000000;
+  const randomBytes = getRandomBytes(24); // Even more random bytes
+  
+  // Create multiple seeds for better distribution
+  let seed1 = timestamp;
+  let seed2 = Math.floor(performanceNow * 1000);
+  
+  // Mix in random bytes
+  for (let i = 0; i < randomBytes.length; i++) {
+    if (i % 2 === 0) {
+      seed1 = (seed1 * 256 + randomBytes[i]) % Number.MAX_SAFE_INTEGER;
+    } else {
+      seed2 = (seed2 * 256 + randomBytes[i]) % Number.MAX_SAFE_INTEGER;
+    }
+  }
+  
+  // Generate two parts and combine
+  const generatePart = (seed: number, minLength: number) => {
+    let result = '';
+    let num = seed;
+    while (result.length < minLength || num > 0) {
+      result = alphabet[num % 62] + result;
+      num = Math.floor(num / 62);
+    }
+    return result;
+  };
+  
+  const part1 = generatePart(seed1, 8);
+  const part2 = generatePart(seed2, 8);
+  
+  // Add final random suffix
+  const suffix = getRandomBytes(6).map(byte => alphabet[byte % 62]).join('');
+  
+  return `form_${part1}${part2}${suffix}`;
 }
 
 /**
@@ -590,3 +642,28 @@ export function findSharedForm(formId: string): FormSchema | null {
 
   return null;
 }
+
+// Development logging utility
+export const devLog = (...args: any[]) => {
+  // Only log in development mode
+  if (import.meta.env.DEV || import.meta.env.VITE_DEBUG === 'true') {
+    console.log(...args);
+  }
+};
+
+export const devWarn = (...args: any[]) => {
+  // Only log warnings in development mode
+  if (import.meta.env.DEV || import.meta.env.VITE_DEBUG === 'true') {
+    console.warn(...args);
+  }
+};
+
+export const devError = (...args: any[]) => {
+  // Always log errors, but with different detail levels
+  if (import.meta.env.DEV || import.meta.env.VITE_DEBUG === 'true') {
+    console.error(...args);
+  } else {
+    // In production, log simplified error messages
+    console.error('An error occurred:', args[0]);
+  }
+};

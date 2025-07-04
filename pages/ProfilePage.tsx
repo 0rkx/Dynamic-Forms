@@ -205,46 +205,6 @@ const ProfilePage: React.FC = () => {
             </Card>
           </motion.div>
 
-          {/* Account Settings */}
-          <motion.div variants={itemVariants}>
-            <Card className="p-6">
-              <h2 className="text-xl font-semibold mb-1">Account Settings</h2>
-              <p className="text-sm text-neutral-600 mb-6">Manage your account security and preferences.</p>
-              
-              <div className="space-y-4">
-                <div className="flex items-center justify-between p-4 border rounded-lg">
-                  <div>
-                    <h3 className="font-medium">Password</h3>
-                    <p className="text-sm text-neutral-600">Change your account password</p>
-                  </div>
-                  <Button variant="outline" size="sm">
-                    Change Password
-                  </Button>
-                </div>
-
-                <div className="flex items-center justify-between p-4 border rounded-lg">
-                  <div>
-                    <h3 className="font-medium">Email Notifications</h3>
-                    <p className="text-sm text-neutral-600">Manage your email notification preferences</p>
-                  </div>
-                  <Button variant="outline" size="sm">
-                    Manage
-                  </Button>
-                </div>
-
-                <div className="flex items-center justify-between p-4 border rounded-lg">
-                  <div>
-                    <h3 className="font-medium">Data Export</h3>
-                    <p className="text-sm text-neutral-600">Download your data and form responses</p>
-                  </div>
-                  <Button variant="outline" size="sm">
-                    Export Data
-                  </Button>
-                </div>
-              </div>
-            </Card>
-          </motion.div>
-
           {/* Danger Zone */}
           <motion.div variants={itemVariants}>
             <Card className="p-6 border-red-200">
@@ -264,26 +224,6 @@ const ProfilePage: React.FC = () => {
                     className="border-red-200 text-red-700 hover:bg-red-100"
                   >
                     Sign Out
-                  </Button>
-                </div>
-
-                <div className="flex items-center justify-between p-4 border border-red-200 rounded-lg bg-red-50">
-                  <div>
-                    <h3 className="font-medium text-red-700">Delete Account</h3>
-                    <p className="text-sm text-red-600">Permanently delete your account and all data</p>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="border-red-300 text-red-700 hover:bg-red-100"
-                    onClick={() => addToast({
-                      type: 'info',
-                      title: 'Feature Coming Soon',
-                      message: 'Account deletion functionality will be implemented in a future update.',
-                      duration: 5000
-                    })}
-                  >
-                    Delete Account
                   </Button>
                 </div>
               </div>

@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Eye, Share2, Edit3 } from 'lucide-react';
+import { Eye, Share2, Edit3, Brain } from 'lucide-react';
+import { analyzeManifestoResponses } from '../lib/gemini';
+import { BulkResponseAnalysisCache } from '../lib/utils';
 import { useFormStore } from '../store/formStore';
 import { cn } from '../lib/utils';
 import { Button } from '../components/ui/Button';
@@ -74,6 +76,10 @@ const FormDetailPage: React.FC = () => {
   const [showShareModal, setShowShareModal] = useState(false);
   const [showBuilderModal, setShowBuilderModal] = useState(false);
   const [editedQuestions, setEditedQuestions] = useState(form?.questions || []);
+  const [initializing, setInitializing] = useState(true);
+  // Local cache timestamp validation (5 minutes)
+  const CACHE_TTL_MS = 5 * 60 * 1000;
+  const cacheKey = `formCache_${id}`;
 
   const activeTab = searchParams.get('tab') || 'analysis';
   
@@ -110,13 +116,93 @@ const FormDetailPage: React.FC = () => {
     loadForm();
   }, [id, getFormById, loadFormResponses, navigate]);
 
-  if (isLoadingForm) {
+  // Load cached data if recent (runs on mount)
+  React.useEffect(() => {
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (Date.now() - parsed.timestamp < CACHE_TTL_MS) {
+          setForm(parsed.form);
+          setTitle(parsed.form.title);
+          setEditedQuestions(parsed.form.questions || []);
+          loadFormResponses(parsed.form.id);
+        }
+      } catch (e) {
+        console.warn('Failed to parse cache', e);
+      }
+    }
+  }, []);
+
+  // Unified initialization: prefetch AI analysis & builder insights before UI
+  React.useEffect(() => {
+    const runInit = async () => {
+      if (isLoadingForm || !form) return;
+
+      try {
+        // 1. Prefetch Answer Analysis if not cached
+        const responsesArr = useFormStore.getState().getResponsesByFormId(form.id) || [];
+        const responsesHash = JSON.stringify(responsesArr.map(r => r.id).sort());
+        const localKey = `ai_analysis_${form.id}_${responsesHash}`;
+
+        let analysisCached = false;
+        // in-memory
+        if ((BulkResponseAnalysisCache as any)[localKey]) {
+          analysisCached = true;
+        } else {
+          const stored = localStorage.getItem(localKey);
+          if (stored) {
+            try {
+              const parsed = JSON.parse(stored);
+              if (Date.now() - parsed.timestamp < CACHE_TTL_MS) {
+                (BulkResponseAnalysisCache as any)[localKey] = parsed.data;
+                analysisCached = true;
+              }
+            } catch {}
+          }
+        }
+
+        if (!analysisCached) {
+          try {
+            const ai = await analyzeManifestoResponses(form, responsesArr);
+            (BulkResponseAnalysisCache as any)[localKey] = ai;
+            localStorage.setItem(localKey, JSON.stringify({ timestamp: Date.now(), data: ai }));
+          } catch (e) {
+            console.warn('Prefetch analysis failed', e);
+          }
+        }
+
+        // 2. Prefetch builder analysis via store if not present
+        const { getAnalysis, isAnalyzing, analyzeFormInBackground } = useFormStore.getState();
+        if (!getAnalysis(form.id) && !isAnalyzing(form.id)) {
+          await analyzeFormInBackground(form);
+        }
+
+        // wait until possible analyzing completes (max 10s)
+        const waitUntil = Date.now() + 10000;
+        while (useFormStore.getState().isAnalyzing(form.id) && Date.now() < waitUntil) {
+          await new Promise(r => setTimeout(r, 300));
+        }
+      } finally {
+        setInitializing(false);
+      }
+    };
+
+    runInit();
+  }, [isLoadingForm, form]);
+
+  if (isLoadingForm || initializing) {
     return (
-      <div className="max-w-6xl mx-auto">
-        <div className="text-center py-20">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-neutral-900 mx-auto"></div>
-          <p className="mt-4 text-neutral-600">Loading form...</p>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-white">
+        <div className="relative w-20 h-20 mb-8">
+          <div className="absolute inset-0 border-2 border-neutral-300 rounded-full"></div>
+          <div className="absolute inset-0 border-2 border-transparent border-t-neutral-900 rounded-full animate-spin"></div>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Brain className="h-6 w-6 text-neutral-700" />
+          </div>
         </div>
+        <h2 className="text-xl font-semibold text-neutral-900 mb-2">Preparing your dashboard…</h2>
+        <p className="text-neutral-600 text-sm">Fetching data and generating insights</p>
       </div>
     );
   }
@@ -166,6 +252,30 @@ const FormDetailPage: React.FC = () => {
     { id: 'responses', label: 'Raw Data' },
     { id: 'settings', label: 'Settings' },
   ];
+
+  const handleTabSwitch = (tabId: string) => setSearchParams({ tab: tabId });
+
+  const saveCache = (f: any, resps: any[]) => {
+    const payload = { timestamp: Date.now(), form: f, responses: resps.slice(0, 100) };
+    localStorage.setItem(cacheKey, JSON.stringify(payload));
+  };
+
+  const refreshFromServer = async () => {
+    setIsLoadingForm(true);
+    try {
+      const freshForm = await getFormById(id);
+      if (freshForm) {
+        setForm(freshForm);
+        setTitle(freshForm.title);
+        setEditedQuestions(freshForm.questions || []);
+        await loadFormResponses(id);
+        const latestResponses = useFormStore.getState().getResponsesByFormId(id) || [];
+        saveCache(freshForm, latestResponses);
+      }
+    } finally {
+      setIsLoadingForm(false);
+    }
+  };
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -249,7 +359,7 @@ const FormDetailPage: React.FC = () => {
           {tabs.map((tab) => (
             <button
               key={tab.id}
-              onClick={() => setSearchParams({ tab: tab.id })}
+              onClick={() => handleTabSwitch(tab.id)}
               className={cn(
                 'whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors',
                 activeTab === tab.id
@@ -266,7 +376,13 @@ const FormDetailPage: React.FC = () => {
       <div>
         {activeTab === 'analysis' && <AnswerAnalysisTab form={form} responses={responses} />}
         {activeTab === 'builder' && <BuilderTab form={form} />}
-        {activeTab === 'responses' && <ResponsesTab form={form} responses={responses} />}
+        {activeTab === 'responses' && (
+          <ResponsesTab 
+            form={form} 
+            responses={responses} 
+            onRefresh={refreshFromServer}
+          />
+        )}
         {activeTab === 'settings' && <SettingsTab form={form} />}
       </div>
 

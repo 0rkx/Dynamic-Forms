@@ -14,6 +14,8 @@ interface AuthStore {
   // Actions
   signIn: (credentials: AuthCredentials) => Promise<void>;
   signUp: (credentials: RegisterCredentials) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
+  signUpWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   updateProfile: (updates: { displayName?: string; photoURL?: string }) => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
@@ -79,6 +81,46 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       }
     } catch (error: any) {
       console.error('Sign up error:', error);
+      set({ 
+        error: error.message, 
+        authState: 'unauthenticated', 
+        user: null, 
+        session: null 
+      });
+      throw error;
+    }
+  },
+
+  signInWithGoogle: async () => {
+    try {
+      set({ error: null, authState: 'loading' });
+      
+      await supabaseAuth.signInWithGoogle();
+      
+      // The auth state will be updated by the auth listener
+      // when the user returns from Google OAuth
+    } catch (error: any) {
+      console.error('Google sign in error:', error);
+      set({ 
+        error: error.message, 
+        authState: 'unauthenticated', 
+        user: null, 
+        session: null 
+      });
+      throw error;
+    }
+  },
+
+  signUpWithGoogle: async () => {
+    try {
+      set({ error: null, authState: 'loading' });
+      
+      await supabaseAuth.signUpWithGoogle();
+      
+      // The auth state will be updated by the auth listener
+      // when the user returns from Google OAuth
+    } catch (error: any) {
+      console.error('Google sign up error:', error);
       set({ 
         error: error.message, 
         authState: 'unauthenticated', 

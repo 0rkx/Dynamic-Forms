@@ -120,28 +120,22 @@ export async function generateManifestoOnly(
   try {
     console.log('📝 Generating manifesto directly via API...');
     
-    // Create a specific manifesto prompt
-    const manifestoPrompt = `Create a comprehensive business manifesto for this form:
+    // Build the full Edge Function URL (reuse logic from gemini.ts)
+    const _env: any = (import.meta as any).env ?? {};
+    const _supabaseUrl: string | undefined = _env.VITE_SUPABASE_URL?.replace(/\/$/, '');
+    const _derivedApiUrl = _supabaseUrl ? `${_supabaseUrl}/functions/v1/ai` : undefined;
+    const _localDefault = 'http://localhost:54321/functions/v1/ai';
+    const apiBaseUrl: string = _env.VITE_API_URL || _derivedApiUrl || _localDefault;
 
-${prompt}
-
-Generate a strategic manifesto that includes:
-1. Product Vision: The core purpose and goals
-2. Target Audience: Who this form is designed for
-3. Business Goals: What we want to achieve
-4. Key Question Areas: Topics for intelligent follow-up questions
-5. Conversation Tone: How we should communicate
-
-Return a structured manifesto that will guide AI to ask relevant follow-up questions that gather valuable insights beyond the basic form questions.`;
-
-    // Call the backend API directly
-    const response = await fetch('/api/ai/generate-manifesto', {
+    // Call the backend API directly – backend now builds full system prompt
+    const response = await fetch(`${apiBaseUrl}/api/ai/generate-manifesto`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${_env.VITE_SUPABASE_ANON_KEY}`,
       },
       body: JSON.stringify({
-        prompt: manifestoPrompt
+        prompt: prompt.trim()
       })
     });
 

@@ -9,9 +9,10 @@ import { useToast } from '../ui/Toast';
 interface ResponsesTabProps {
     form: FormSchema;
     responses: FormResponse[];
+    onRefresh?: () => void;
 }
 
-const ResponsesTab: React.FC<ResponsesTabProps> = ({ form, responses }) => {
+const ResponsesTab: React.FC<ResponsesTabProps> = ({ form, responses, onRefresh }) => {
     const [selectedResponse, setSelectedResponse] = useState<FormResponse | null>(null);
     const [isExportingToSheets, setIsExportingToSheets] = useState(false);
     const [sheetsExportSuccess, setSheetsExportSuccess] = useState<string | null>(null);
@@ -105,8 +106,13 @@ const ResponsesTab: React.FC<ResponsesTabProps> = ({ form, responses }) => {
     return (
         <div>
             <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-semibold">{responses.length} responses</h2>
-                <div className="flex gap-2">
+                <h2 className="text-2xl font-semibold text-neutral-900">{responses.length} responses</h2>
+                <div className="flex gap-2 items-center">
+                    {onRefresh && (
+                        <Button variant="outline" onClick={onRefresh} className="text-sm">
+                            Refresh
+                        </Button>
+                    )}
                     <Button variant="outline" onClick={handleExportCsv} disabled={responses.length === 0}>
                         Export CSV
                     </Button>

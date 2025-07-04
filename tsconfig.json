@@ -26,5 +26,8 @@
     "paths": {
       "@/*" :  ["./*"]
     }
-  }
+  },
+  "exclude": [
+    "supabase/functions"
+  ]
 }

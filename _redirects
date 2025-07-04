@@ -1,0 +1,5 @@
+# Handle SPA routing - redirect all routes to index.html
+/*    /index.html   200
+
+# Optional: Handle API routes (if you have any client-side API routes)
+/api/*  https://your-supabase-project.supabase.co/functions/v1/:splat  200 

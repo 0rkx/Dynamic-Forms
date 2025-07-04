@@ -320,3 +320,39 @@ export interface ResponseAnalysis {
   followUpPotential?: number;
   generatedAt: string;
 }
+
+// New Manifesto Analysis Brain Types
+export interface ManifestoAnalysisResult {
+  overview: {
+    totalResponses: number;
+    manifestoAlignment: 'high' | 'medium' | 'low';
+    topPriority: string;
+  };
+  whatPeopleLike: {
+    insight: string;
+    evidence: string[];
+    impact: 'high' | 'medium' | 'low';
+    manifestoConnection: string;
+  }[];
+  whatPeopleDislike: {
+    problem: string;
+    evidence: string[];
+    impact: 'high' | 'medium' | 'low';
+    manifestoConnection: string;
+  }[];
+  actionableInsights: {
+    title: string;
+    description: string;
+    action: string;
+    priority: 'high' | 'medium' | 'low';
+    effort: 'low' | 'medium' | 'high';
+    expectedImpact: string;
+  }[];
+  recommendedActions: {
+    action: string;
+    reason: string;
+    timeframe: string;
+    resources: string[];
+    success_metric: string;
+  }[];
+}

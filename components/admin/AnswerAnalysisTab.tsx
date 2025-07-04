@@ -1,51 +1,101 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FormSchema, FormResponse } from '../../types';
+import { FormSchema, FormResponse, ManifestoAnalysisResult } from '../../types';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/Card';
 import { Button } from '../ui/Button';
-import { Brain, TrendingUp, Users, MessageSquare, AlertCircle, CheckCircle, Lightbulb, Target, RefreshCw } from 'lucide-react';
-import { analyzeFormResponses } from '../../lib/gemini';
+import { Brain, ThumbsUp, ThumbsDown, Lightbulb, Target, RefreshCw, CheckCircle, AlertTriangle, Clock, Users, ArrowRight } from 'lucide-react';
+import { analyzeManifestoResponses } from '../../lib/gemini';
 import { BulkResponseAnalysisCache } from '../../lib/utils';
 import { supabaseService } from '../../lib/supabaseService';
+
+// Local browser cache TTL (5 minutes)
+const LOCAL_TTL_MS = 5 * 60 * 1000;
 
 interface AnswerAnalysisTabProps {
   form: FormSchema;
   responses: FormResponse[];
 }
 
-interface AnalysisResult {
-  overview: {
-    totalResponses: number;
-    mainThemes: string[];
-    overallSentiment: 'positive' | 'neutral' | 'negative';
-    confidenceScore: number;
-  };
-  keyInsights: {
-    type: 'positive' | 'negative' | 'suggestion' | 'trend';
-    title: string;
-    description: string;
-    impact: 'high' | 'medium' | 'low';
-    actionable: boolean;
-  }[];
-  recommendations: {
-    priority: 'high' | 'medium' | 'low';
-    action: string;
-    reason: string;
-    impact: string;
-  }[];
-}
-
 const AnswerAnalysisTab: React.FC<AnswerAnalysisTabProps> = ({ form, responses }) => {
-  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [analysis, setAnalysis] = useState<ManifestoAnalysisResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const isAnalyzingRef = useRef(false);
   const currentResponsesHashRef = useRef<string>('');
 
+  // Validate analysis structure to prevent runtime errors
+  const validateAnalysisStructure = (analysis: any): ManifestoAnalysisResult => {
+    if (!analysis || typeof analysis !== 'object') {
+      throw new Error('Invalid analysis structure: analysis is not an object');
+    }
+
+    return {
+      overview: analysis.overview || {
+        totalResponses: 0,
+        manifestoAlignment: 'low' as const,
+        topPriority: 'No analysis available'
+      },
+      whatPeopleLike: Array.isArray(analysis.whatPeopleLike) ? analysis.whatPeopleLike : [],
+      whatPeopleDislike: Array.isArray(analysis.whatPeopleDislike) ? analysis.whatPeopleDislike : [],
+      actionableInsights: Array.isArray(analysis.actionableInsights) ? analysis.actionableInsights : [],
+      recommendedActions: Array.isArray(analysis.recommendedActions) ? analysis.recommendedActions : []
+    };
+  };
+
+  // Early return if form or responses are not properly loaded
+  if (!form || !responses || !Array.isArray(responses)) {
+    return (
+      <div className="text-center py-24 px-8">
+        <div className="w-24 h-24 bg-neutral-100 rounded-lg mx-auto mb-8 flex items-center justify-center">
+          <Brain className="h-12 w-12 text-neutral-600" />
+        </div>
+        <h2 className="text-2xl font-bold text-neutral-900 mb-4">Loading...</h2>
+        <p className="text-neutral-600">Preparing analysis data...</p>
+      </div>
+    );
+  }
+
   const analyzeResponses = async (forceRefresh = false) => {
     if (isAnalyzingRef.current || responses.length === 0) return;
     
-            const responsesHash = JSON.stringify(responses.map(r => r.id).sort());
+    const responsesHash = JSON.stringify(responses.map(r => r?.id || '').filter(id => id).sort());
+
+    const localCacheKey = `ai_analysis_${form.id}_${responsesHash}`;
+
+    // 1️⃣ Check in-memory cache (survives tab switches)
+    const memCached = (BulkResponseAnalysisCache as any)?.[localCacheKey];
+    if (!forceRefresh && memCached) {
+      try {
+        const validatedCached = validateAnalysisStructure(memCached);
+        setAnalysis(validatedCached);
+        setError(null);
+        currentResponsesHashRef.current = responsesHash;
+        return;
+      } catch (validationError) {
+        console.warn('Cached analysis validation failed:', validationError);
+        // Continue to fresh analysis
+      }
+    }
+
+    // 2️⃣ Check localStorage (within TTL)
+    if (!forceRefresh) {
+      const localRaw = localStorage.getItem(localCacheKey);
+      if (localRaw) {
+        try {
+          const parsed = JSON.parse(localRaw);
+          if (Date.now() - parsed.timestamp < LOCAL_TTL_MS) {
+            const validatedData = validateAnalysisStructure(parsed.data);
+            setAnalysis(validatedData);
+            setError(null);
+            (BulkResponseAnalysisCache as any)[localCacheKey] = validatedData;
+            currentResponsesHashRef.current = responsesHash;
+            return;
+          }
+        } catch (validationError) {
+          console.warn('Local cache validation failed:', validationError);
+        }
+      }
+    }
     
     if (!forceRefresh && currentResponsesHashRef.current === responsesHash && analysis) {
       return;
@@ -54,29 +104,23 @@ const AnswerAnalysisTab: React.FC<AnswerAnalysisTabProps> = ({ form, responses }
     // Check database cache first
     if (!forceRefresh) {
       try {
-        const cacheKey = `form_analysis_${form.id}_${responsesHash}`;
+        const cacheKey = `manifesto_analysis_${form.id}_${responsesHash}`;
         const cachedAnalysis = await supabaseService.getAnalysisCache(cacheKey);
         if (cachedAnalysis) {
-          console.log('Using database-cached analysis');
-          setAnalysis(cachedAnalysis);
-          setError(null);
-          currentResponsesHashRef.current = responsesHash;
-          return;
+          console.log('Using database-cached manifesto analysis');
+          try {
+            const validatedCached = validateAnalysisStructure(cachedAnalysis);
+            setAnalysis(validatedCached);
+            setError(null);
+            currentResponsesHashRef.current = responsesHash;
+            return;
+          } catch (validationError) {
+            console.warn('Database cache validation failed:', validationError);
+            // Continue to fresh analysis
+          }
         }
       } catch (cacheError) {
         console.warn('Failed to check database cache:', cacheError);
-      }
-    }
-    
-    // Check localStorage cache
-    if (!forceRefresh) {
-      const cachedAnalysis = BulkResponseAnalysisCache.get(form.id, responsesHash);
-      if (cachedAnalysis) {
-        console.log('Using localStorage-cached analysis');
-        setAnalysis(cachedAnalysis);
-        setError(null);
-        currentResponsesHashRef.current = responsesHash;
-        return;
       }
     }
     
@@ -85,29 +129,32 @@ const AnswerAnalysisTab: React.FC<AnswerAnalysisTabProps> = ({ form, responses }
     isAnalyzingRef.current = true;
     
     try {
-      console.log('Starting AI analysis...');
-      const aiAnalysis = await analyzeFormResponses(form, responses);
+      console.log('Starting manifesto-aware AI analysis...');
+      const aiAnalysis = await analyzeManifestoResponses(form, responses);
+      
+      // Validate the analysis structure
+      const validatedAnalysis = validateAnalysisStructure(aiAnalysis);
       
       // Store in database cache for 24 hours
       try {
-        const cacheKey = `form_analysis_${form.id}_${responsesHash}`;
-        await supabaseService.setAnalysisCache(cacheKey, aiAnalysis, 24);
-        console.log('Analysis cached in database');
+        const cacheKey = `manifesto_analysis_${form.id}_${responsesHash}`;
+        await supabaseService.setAnalysisCache(cacheKey, validatedAnalysis, 24);
+        console.log('Manifesto analysis cached in database');
       } catch (dbCacheError) {
-        console.warn('Failed to cache analysis in database:', dbCacheError);
+        console.warn('Failed to cache manifesto analysis in database:', dbCacheError);
       }
       
-      // Store in localStorage cache as backup
-      BulkResponseAnalysisCache.set(form.id, responsesHash, aiAnalysis, 2);
-      
-      setAnalysis(aiAnalysis);
+      setAnalysis(validatedAnalysis);
       setError(null);
+      // Save to caches
+      (BulkResponseAnalysisCache as any)[localCacheKey] = validatedAnalysis;
+      localStorage.setItem(localCacheKey, JSON.stringify({ timestamp: Date.now(), data: validatedAnalysis }));
       setRetryCount(0);
       currentResponsesHashRef.current = responsesHash;
       
-      console.log('Analysis completed and cached');
+      console.log('Manifesto analysis completed and cached');
     } catch (error: any) {
-      console.error('Failed to analyze responses:', error);
+      console.error('Failed to analyze responses with manifesto:', error);
       setError(`Analysis failed: ${error.message || 'Unknown error'}. This might be due to AI service limitations or network issues.`);
       setAnalysis(null);
       setRetryCount(prev => prev + 1);
@@ -127,14 +174,105 @@ const AnswerAnalysisTab: React.FC<AnswerAnalysisTabProps> = ({ form, responses }
     }
   }, [responses]);
 
-  const getInsightIcon = (type: string) => {
-    switch (type) {
-      case 'positive': return <CheckCircle className="h-5 w-5 text-neutral-600" />;
-      case 'negative': return <AlertCircle className="h-5 w-5 text-neutral-600" />;
-      case 'suggestion': return <Lightbulb className="h-5 w-5 text-neutral-600" />;
-      case 'trend': return <TrendingUp className="h-5 w-5 text-neutral-600" />;
-      default: return <MessageSquare className="h-5 w-5 text-neutral-500" />;
+  const getImpactColor = (impact: string) => {
+    switch (impact) {
+      case 'high': return 'bg-red-100 text-red-800';
+      case 'medium': return 'bg-yellow-100 text-yellow-800';
+      case 'low': return 'bg-green-100 text-green-800';
+      default: return 'bg-gray-100 text-gray-800';
     }
+  };
+
+  const getPriorityColor = (priority: string) => {
+    switch (priority) {
+      case 'high': return 'bg-red-100 text-red-800 border-red-200';
+      case 'medium': return 'bg-yellow-100 text-yellow-800 border-yellow-200';
+      case 'low': return 'bg-green-100 text-green-800 border-green-200';
+      default: return 'bg-gray-100 text-gray-800 border-gray-200';
+    }
+  };
+
+  const getEffortColor = (effort: string) => {
+    switch (effort) {
+      case 'low': return 'bg-green-100 text-green-800';
+      case 'medium': return 'bg-yellow-100 text-yellow-800';
+      case 'high': return 'bg-red-100 text-red-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const getAlignmentColor = (alignment: string) => {
+    switch (alignment) {
+      case 'high': return 'bg-green-100 text-green-800';
+      case 'medium': return 'bg-yellow-100 text-yellow-800';
+      case 'low': return 'bg-red-100 text-red-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  /* -------------------------- UI HELPERS -------------------------- */
+
+  interface CollapsibleCardProps {
+    title: string;
+    impact: string;
+    evidence: string[];
+    manifestoConnection: string;
+    color: 'green' | 'red';
+  }
+
+  const CollapsibleCard: React.FC<CollapsibleCardProps> = ({ title, impact, evidence, manifestoConnection, color }) => {
+    const [open, setOpen] = useState(false);
+
+    const borderColor = color === 'green' ? 'border-l-green-500' : 'border-l-red-500';
+    const bgEvidence = color === 'green' ? 'bg-green-50' : 'bg-red-50';
+    const evidenceBullet = color === 'green' ? 'text-green-500' : 'text-red-500';
+    const evidenceText = color === 'green' ? 'text-green-700' : 'text-red-700';
+    const evidenceHeading = color === 'green' ? 'text-green-800' : 'text-red-800';
+
+    return (
+      <Card className={`border-l-4 ${borderColor}`}>
+        <CardContent className="p-4">
+          <div
+            className="flex items-start justify-between cursor-pointer"
+            onClick={() => setOpen(!open)}
+          >
+            <h4 className="font-semibold text-neutral-900 mr-4 flex-1 select-none">
+              {title}
+            </h4>
+            <span
+              className={`text-xs px-2 py-1 rounded-full ${getImpactColor(impact)}`}
+            >
+              {impact} impact
+            </span>
+          </div>
+
+          {open && (
+            <div className="space-y-3 mt-3">
+              <div className={`${bgEvidence} rounded-lg p-3`}>
+                <p className={`text-sm ${evidenceHeading} font-medium mb-1`}>Evidence:</p>
+                <ul className={`text-sm ${evidenceText} space-y-1`}>
+                  {(evidence || []).map((ev, idx) => (
+                    <li key={idx} className="flex items-start">
+                      <span className={`${evidenceBullet} mr-2`}>•</span>
+                      {ev}
+                    </li>
+                  ))}
+                </ul>
+                {(!evidence || evidence.length === 0) && (
+                  <p className={`text-sm ${evidenceText} italic`}>No evidence available</p>
+                )}
+              </div>
+
+              <div className="bg-neutral-50 rounded-lg p-3">
+                <p className="text-sm text-neutral-600">
+                  <strong>Manifesto Connection:</strong> {manifestoConnection}
+                </p>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
   };
 
   if (responses.length === 0) {
@@ -144,41 +282,33 @@ const AnswerAnalysisTab: React.FC<AnswerAnalysisTabProps> = ({ form, responses }
           <Brain className="h-12 w-12 text-neutral-600" />
         </div>
         
-        <h2 className="text-2xl font-bold text-neutral-900 mb-4">Ready to Analyze Responses</h2>
+        <h2 className="text-2xl font-bold text-neutral-900 mb-4">Ready for Manifesto Analysis</h2>
         <p className="text-neutral-600 mb-8 max-w-2xl mx-auto">
-          Once responses start coming in, I'll use AI to discover insights, trends, and actionable recommendations from your form data.
+          Once responses start coming in, I'll analyze them against your manifesto to discover what people really like and dislike, plus actionable insights to help you improve.
         </p>
         
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-3xl mx-auto">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-2xl mx-auto">
           <div className="border border-neutral-200 rounded-lg p-6">
-            <div className="w-12 h-12 bg-neutral-100 rounded-lg mx-auto mb-4 flex items-center justify-center">
-              <TrendingUp className="h-6 w-6 text-neutral-600" />
+            <div className="w-12 h-12 bg-green-100 rounded-lg mx-auto mb-4 flex items-center justify-center">
+              <ThumbsUp className="h-6 w-6 text-green-600" />
             </div>
-            <h3 className="font-semibold text-neutral-900 mb-2">Sentiment Analysis</h3>
-            <p className="text-sm text-neutral-600">Understand the emotional tone of responses</p>
+            <h3 className="font-semibold text-neutral-900 mb-2">What People Like</h3>
+            <p className="text-sm text-neutral-600">Discover what resonates with your audience</p>
           </div>
           
           <div className="border border-neutral-200 rounded-lg p-6">
-            <div className="w-12 h-12 bg-neutral-100 rounded-lg mx-auto mb-4 flex items-center justify-center">
-              <Target className="h-6 w-6 text-neutral-600" />
+            <div className="w-12 h-12 bg-red-100 rounded-lg mx-auto mb-4 flex items-center justify-center">
+              <ThumbsDown className="h-6 w-6 text-red-600" />
             </div>
-            <h3 className="font-semibold text-neutral-900 mb-2">Key Insights</h3>
-            <p className="text-sm text-neutral-600">Discover patterns and important themes</p>
-          </div>
-          
-          <div className="border border-neutral-200 rounded-lg p-6">
-            <div className="w-12 h-12 bg-neutral-100 rounded-lg mx-auto mb-4 flex items-center justify-center">
-              <Lightbulb className="h-6 w-6 text-neutral-600" />
-            </div>
-            <h3 className="font-semibold text-neutral-900 mb-2">Recommendations</h3>
-            <p className="text-sm text-neutral-600">Get actionable suggestions for improvement</p>
+            <h3 className="font-semibold text-neutral-900 mb-2">What People Dislike</h3>
+            <p className="text-sm text-neutral-600">Identify pain points and areas for improvement</p>
           </div>
         </div>
         
         <div className="mt-12">
           <div className="inline-flex items-center px-4 py-2 bg-neutral-100 text-neutral-700 rounded-lg text-sm">
-            <MessageSquare className="h-4 w-4 mr-2" />
-            Waiting for first response...
+            <Brain className="h-4 w-4 mr-2" />
+            Waiting for responses to analyze against your manifesto...
           </div>
         </div>
       </div>
@@ -189,7 +319,7 @@ const AnswerAnalysisTab: React.FC<AnswerAnalysisTabProps> = ({ form, responses }
     return (
       <div className="text-center py-24 px-8">
         <div className="w-24 h-24 bg-red-50 rounded-lg mx-auto mb-8 flex items-center justify-center">
-          <AlertCircle className="h-12 w-12 text-red-500" />
+          <AlertTriangle className="h-12 w-12 text-red-500" />
         </div>
         
         <h2 className="text-2xl font-bold text-neutral-900 mb-4">Analysis Failed</h2>
@@ -228,30 +358,30 @@ const AnswerAnalysisTab: React.FC<AnswerAnalysisTabProps> = ({ form, responses }
           </div>
         </div>
         
-        <h2 className="text-2xl font-bold text-neutral-900 mb-4">AI Analysis in Progress</h2>
+        <h2 className="text-2xl font-bold text-neutral-900 mb-4">Manifesto Analysis in Progress</h2>
         <p className="text-neutral-600 mb-8 max-w-2xl mx-auto">
-          Analyzing {responses.length} responses to discover insights, patterns, and actionable recommendations...
+          Analyzing {responses.length} responses against your manifesto to discover what people really like and dislike...
         </p>
         
         <div className="max-w-md mx-auto">
           <div className="space-y-4">
             <div className="flex items-center text-sm">
               <div className="w-2 h-2 bg-neutral-400 rounded-full mr-3"></div>
-              <span className="text-neutral-700">Processing responses...</span>
+              <span className="text-neutral-700">Analyzing against manifesto...</span>
             </div>
             <div className="flex items-center text-sm">
               <div className="w-2 h-2 bg-neutral-400 rounded-full mr-3"></div>
-              <span className="text-neutral-700">Extracting key themes...</span>
+              <span className="text-neutral-700">Identifying likes & dislikes...</span>
             </div>
             <div className="flex items-center text-sm">
               <div className="w-2 h-2 bg-neutral-400 rounded-full mr-3"></div>
-              <span className="text-neutral-700">Generating insights...</span>
+              <span className="text-neutral-700">Generating actionable insights...</span>
             </div>
           </div>
         </div>
         
         <div className="mt-8 text-xs text-neutral-500">
-          This usually takes 10-30 seconds
+          This usually takes 15-30 seconds
         </div>
       </div>
     );
@@ -261,149 +391,182 @@ const AnswerAnalysisTab: React.FC<AnswerAnalysisTabProps> = ({ form, responses }
 
   return (
     <div className="space-y-8">
-      {/* Show retry button if there was an error but we have cached analysis */}
+      {/* Optional retry alert */}
       {error && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+        <div className="border border-neutral-200 rounded-lg p-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <AlertCircle className="h-5 w-5 text-yellow-600" />
-              <span className="text-sm text-yellow-800">
-                Showing cached analysis. Latest analysis failed: {error}
-              </span>
+            <div className="flex items-center space-x-2 text-neutral-700 text-sm">
+              <AlertTriangle className="h-4 w-4" />
+              Showing cached analysis. Latest analysis failed.
             </div>
             <Button size="sm" variant="outline" onClick={handleRetry} disabled={isAnalyzing}>
-              <RefreshCw className={`h-4 w-4 mr-1 ${isAnalyzing ? 'animate-spin' : ''}`} />
               Retry
             </Button>
           </div>
         </div>
       )}
 
-      {/* Analysis refresh button */}
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-semibold">AI Analysis Results</h2>
-        <Button variant="outline" onClick={() => analyzeResponses(true)} disabled={isAnalyzing} size="sm">
-          <RefreshCw className={`h-4 w-4 mr-2 ${isAnalyzing ? 'animate-spin' : ''}`} />
-          {isAnalyzing ? 'Analyzing...' : 'Refresh Analysis'}
-        </Button>
-      </div>
-
-      {/* Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="border border-neutral-200 rounded-lg p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 bg-neutral-100 rounded-lg flex items-center justify-center">
-              <Users className="h-5 w-5 text-neutral-600" />
-            </div>
-            <h3 className="font-semibold text-neutral-900">Total Voices</h3>
-          </div>
-          <p className="text-3xl font-bold text-neutral-900">{analysis?.overview?.totalResponses || 0}</p>
-          <p className="text-sm text-neutral-600">people shared feedback</p>
-        </div>
-
-        <div className="border border-neutral-200 rounded-lg p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 bg-neutral-100 rounded-lg flex items-center justify-center">
-              <TrendingUp className="h-5 w-5 text-neutral-600" />
-            </div>
-            <h3 className="font-semibold text-neutral-900">Overall Sentiment</h3>
-          </div>
-          <p className="text-3xl font-bold mb-1 text-neutral-900">
-            {analysis?.overview?.overallSentiment === 'positive' ? '😊' :
-             analysis?.overview?.overallSentiment === 'negative' ? '😟' : '😐'}
-          </p>
-          <p className="text-sm capitalize text-neutral-600">{analysis?.overview?.overallSentiment || 'neutral'} feedback</p>
-        </div>
-
-        <div className="border border-neutral-200 rounded-lg p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 bg-neutral-100 rounded-lg flex items-center justify-center">
-              <Brain className="h-5 w-5 text-neutral-600" />
-            </div>
-            <h3 className="font-semibold text-neutral-900">AI Confidence</h3>
-          </div>
-          <p className="text-3xl font-bold text-neutral-900">{analysis?.overview?.confidenceScore || 0}%</p>
-          <p className="text-sm text-neutral-600">analysis accuracy</p>
-        </div>
-
-        <div className="border border-neutral-200 rounded-lg p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 bg-neutral-100 rounded-lg flex items-center justify-center">
-              <Target className="h-5 w-5 text-neutral-600" />
-            </div>
-            <h3 className="font-semibold text-neutral-900">Main Themes</h3>
-          </div>
-          <div className="space-y-2">
-            {(analysis?.overview?.mainThemes || []).slice(0, 3).map((theme, index) => (
-              <div key={index} className="text-xs px-3 py-2 bg-neutral-100 text-neutral-700 rounded-lg">
-                {theme}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Key Insights */}
-      <div>
-        <div className="mb-8">
-          <h2 className="text-2xl font-bold text-neutral-900 mb-2">What Your Customers Are Really Saying</h2>
-          <p className="text-neutral-600">AI-powered insights from your responses</p>
-        </div>
-        <div className="grid gap-6">
-          {(analysis?.keyInsights || []).map((insight, index) => (
-            <div key={index} className="border border-neutral-200 rounded-lg p-6">
-              <div className="flex items-start gap-4">
-                <div className="flex-shrink-0">
-                  <div className="w-12 h-12 bg-neutral-100 rounded-lg flex items-center justify-center">
-                    {getInsightIcon(insight.type)}
-                  </div>
-                </div>
-                <div className="flex-1">
-                  <h3 className="font-semibold text-neutral-900 mb-2">{insight.title}</h3>
-                  <p className="text-neutral-600 mb-4 leading-relaxed">{insight.description}</p>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs px-3 py-1 bg-neutral-100 text-neutral-700 rounded-full">
-                      {insight.impact} impact
-                    </span>
-                    {insight.actionable && (
-                      <span className="text-xs px-3 py-1 bg-neutral-100 text-neutral-700 rounded-full">
-                        actionable
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Actionable Recommendations */}
-      <div>
-        <div className="mb-8">
-          <h2 className="text-2xl font-bold text-neutral-900 mb-2">What You Should Do Next</h2>
-          <p className="text-neutral-600">Prioritized actions based on customer feedback</p>
-        </div>
+      {/* Answer Garden Style: What People Like vs Dislike */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* What People Like */}
         <div className="space-y-6">
-          {(analysis?.recommendations || []).map((rec, index) => (
-            <div key={index} className="border border-neutral-200 rounded-lg p-6 border-l-4 border-l-neutral-900">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-3">
-                    <span className="text-xs px-3 py-1 bg-neutral-100 text-neutral-700 rounded-full">
-                      {rec.priority} priority
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center">
+              <ThumbsUp className="h-5 w-5 text-green-600" />
+            </div>
+            <h3 className="text-xl font-bold text-neutral-900">What People Like</h3>
+          </div>
+          
+          <div className="space-y-4">
+            {(analysis.whatPeopleLike || []).map((item, index) => (
+              <CollapsibleCard
+                key={index}
+                title={item.insight}
+                impact={item.impact}
+                evidence={item.evidence}
+                manifestoConnection={item.manifestoConnection}
+                color="green"
+              />
+            ))}
+            {(!analysis.whatPeopleLike || analysis.whatPeopleLike.length === 0) && (
+              <div className="text-neutral-500 text-center py-8">
+                <p>No positive insights found in the analysis.</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* What People Dislike */}
+        <div className="space-y-6">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-red-100 rounded-lg flex items-center justify-center">
+              <ThumbsDown className="h-5 w-5 text-red-600" />
+            </div>
+            <h3 className="text-xl font-bold text-neutral-900">What People Dislike</h3>
+          </div>
+          
+          <div className="space-y-4">
+            {(analysis.whatPeopleDislike || []).map((item, index) => (
+              <CollapsibleCard
+                key={index}
+                title={item.problem}
+                impact={item.impact}
+                evidence={item.evidence}
+                manifestoConnection={item.manifestoConnection}
+                color="red"
+              />
+            ))}
+            {(!analysis.whatPeopleDislike || analysis.whatPeopleDislike.length === 0) && (
+              <div className="text-neutral-500 text-center py-8">
+                <p>No negative insights found in the analysis.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Actionable Insights */}
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+            <Lightbulb className="h-5 w-5 text-blue-600" />
+          </div>
+          <h3 className="text-xl font-bold text-neutral-900">Actionable Insights</h3>
+        </div>
+        
+        <div className="grid gap-6">
+          {(analysis.actionableInsights || []).map((insight, index) => (
+            <Card key={index} className={`border-l-4 ${getPriorityColor(insight.priority).replace('bg-', 'border-l-').replace('text-', 'border-l-').replace('100', '500')}`}>
+              <CardContent className="p-6">
+                <div className="flex items-start justify-between mb-4">
+                  <h4 className="font-semibold text-neutral-900 text-lg">{insight.title}</h4>
+                  <div className="flex gap-2">
+                    <span className={`text-xs px-2 py-1 rounded-full ${getPriorityColor(insight.priority)}`}>
+                      {insight.priority} priority
+                    </span>
+                    <span className={`text-xs px-2 py-1 rounded-full ${getEffortColor(insight.effort)}`}>
+                      {insight.effort} effort
                     </span>
                   </div>
-                  <h3 className="font-semibold text-neutral-900 mb-2">{rec.action}</h3>
-                  <p className="text-neutral-600 mb-3 leading-relaxed">{rec.reason}</p>
-                  <p className="text-sm text-neutral-800 bg-neutral-50 rounded-lg p-3">{rec.impact}</p>
                 </div>
-                <Button size="sm" variant="outline" className="flex-shrink-0">
-                  Plan Action
-                </Button>
-              </div>
-            </div>
+                
+                <p className="text-neutral-600 mb-4 leading-relaxed">{insight.description}</p>
+                
+                <div className="bg-neutral-50 rounded-lg p-4 mb-4">
+                  <div className="flex items-start gap-2">
+                    <ArrowRight className="h-4 w-4 text-neutral-600 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-neutral-900 mb-1">Action:</p>
+                      <p className="text-sm text-neutral-700">{insight.action}</p>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="bg-blue-50 rounded-lg p-4">
+                  <p className="text-sm text-blue-800">
+                    <strong>Expected Impact:</strong> {insight.expectedImpact}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
           ))}
+          {(!analysis.actionableInsights || analysis.actionableInsights.length === 0) && (
+            <div className="text-neutral-500 text-center py-8">
+              <p>No actionable insights found in the analysis.</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Recommended Actions */}
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
+            <Target className="h-5 w-5 text-purple-600" />
+          </div>
+          <h3 className="text-xl font-bold text-neutral-900">Recommended Actions</h3>
+        </div>
+        
+        <div className="space-y-4">
+          {(analysis.recommendedActions || []).map((action, index) => (
+            <Card key={index} className="border-l-4 border-l-purple-500">
+              <CardContent className="p-6">
+                <div className="flex items-start justify-between mb-4">
+                  <h4 className="font-semibold text-neutral-900 text-lg">{action.action}</h4>
+                  <div className="flex items-center gap-2 text-sm text-neutral-600">
+                    <Clock className="h-4 w-4" />
+                    {action.timeframe}
+                  </div>
+                </div>
+                
+                <p className="text-neutral-600 mb-4 leading-relaxed">{action.reason}</p>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="bg-neutral-50 rounded-lg p-4">
+                    <p className="text-sm font-medium text-neutral-900 mb-2">Resources Needed:</p>
+                    <ul className="text-sm text-neutral-700 space-y-1">
+                      {(action.resources || []).map((resource, idx) => (
+                        <li key={idx} className="flex items-start">
+                          <span className="text-neutral-500 mr-2">•</span>
+                          {resource}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  
+                  <div className="bg-green-50 rounded-lg p-4">
+                    <p className="text-sm font-medium text-green-900 mb-2">Success Metric:</p>
+                    <p className="text-sm text-green-800">{action.success_metric}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+          {(!analysis.recommendedActions || analysis.recommendedActions.length === 0) && (
+            <div className="text-neutral-500 text-center py-8">
+              <p>No recommended actions found in the analysis.</p>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -8,8 +8,13 @@ import {
 import { generateFormId } from './utils';
 import { validateFormDataWithRetry, sanitizeInput } from './validation';
 
-// Configuration for the backend API
-const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
+// Configuration for the backend API (Supabase Edge Functions)
+const _env = (import.meta as any).env ?? {};
+const _supabaseUrl: string | undefined = _env.VITE_SUPABASE_URL?.replace(/\/$/, '');
+const _derivedApiUrl = _supabaseUrl ? `${_supabaseUrl}/functions/v1/ai` : undefined;
+const _localDefault = 'http://localhost:54321/functions/v1/ai';
+
+const API_BASE_URL: string = _env.VITE_API_URL || _derivedApiUrl || _localDefault;
 
 interface APIError {
   error: string;
@@ -28,11 +33,15 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}, timeou
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   
+  // Get the Supabase anon key for authorization
+  const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
+  
   try {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseAnonKey}`,
         ...options.headers,
       },
       signal: controller.signal,
@@ -84,12 +93,8 @@ export async function generateDualContextQuestion(
   }
 
   try {
-    // Build context-rich prompt for the AI
-    const contextPrompt = buildDualContextPrompt(request, currentQuestion, userAnswer);
-    
-    // Sanitize inputs
+    // Sanitize the user's answer (the only free-text we send to the backend)
     const sanitizedAnswer = sanitizeInput(userAnswer);
-    const sanitizedPrompt = sanitizeInput(contextPrompt);
     
     // Generate question using enhanced context
     const response = await apiRequest<{
@@ -104,7 +109,6 @@ export async function generateDualContextQuestion(
     }>('/api/ai/generate-dual-context-question', {
       method: 'POST',
       body: JSON.stringify({
-        contextPrompt: sanitizedPrompt,
         currentQuestion,
         userAnswer: sanitizedAnswer,
         manifestoContext: request.userManifesto,
@@ -136,66 +140,9 @@ export async function generateDualContextQuestion(
   }
 }
 
-/**
- * Build a rich context prompt that includes both manifesto and form context
- * This is what makes the AI behave like a real product strategist
- */
-function buildDualContextPrompt(
-  request: DualContextQuestionRequest,
-  currentQuestion: Question,
-  userAnswer: string
-): string {
-  const { userManifesto, formContext } = request;
-  
-  let prompt = `You are an expert product strategist conducting a conversation to deeply understand the user's product needs.
-
-PRODUCT CONTEXT (User Manifesto):
-- Product Vision: ${userManifesto.productVision}
-- Target Audience: ${userManifesto.targetAudience}
-- Core Values: ${userManifesto.coreValues.join(', ')}
-- Business Goals: ${userManifesto.businessGoals.join(', ')}
-- Key Question Areas: ${userManifesto.keyQuestionAreas.join(', ')}
-- Conversation Tone: ${userManifesto.conversationTone}
-
-CONVERSATION CONTEXT (Previous Insights):`;
-
-  if (formContext.totalEntries > 0) {
-    prompt += `
-- Total conversations analyzed: ${formContext.totalEntries}
-- Top themes from previous users: ${formContext.topThemes.map(t => t.theme).join(', ')}
-- Common user pain points: ${formContext.commonUserPains.join(', ')}
-- Product insights discovered: ${formContext.productInsights.join(', ')}
-- Successful question types: ${formContext.successfulQuestionTypes.join(', ')}`;
-  } else {
-    prompt += `
-- This is a new form - no previous conversation data available`;
-  }
-
-  prompt += `
-
-CURRENT SITUATION:
-- The user just answered: "${currentQuestion.label}"
-- Their response was: "${userAnswer}"
-- Trigger reason: ${request.triggerReason}
-
-INSTRUCTIONS:
-Generate a follow-up question that:
-1. DIRECTLY builds on their specific answer
-2. Aligns with the product vision and business goals
-3. Avoids topics already covered by previous users (if any)
-4. Uses the specified conversation tone
-5. Aims to uncover deep product insights
-6. Is genuinely curious and not robotic
-
-The question should feel like it's coming from someone who:
-- Really understands their product space
-- Is genuinely interested in their specific situation
-- Has the context to ask intelligent follow-ups
-- Knows what insights would be most valuable
-
-Generate a specific, contextual question that would make the user think "Wow, this person really gets it."`;
-
-  return prompt;
+// Legacy stub – prompt assembly is now handled in the backend for security reasons.
+function buildDualContextPrompt(): string {
+  return '';
 }
 
 /**
@@ -265,20 +212,12 @@ export async function generateManifestoAlignedQuestion(
 ): Promise<Question | null> {
   
   try {
-    const prompt = `Based on this product manifesto, generate a strategic question that would help understand the user's needs:
-
-Product Vision: ${manifestoContext.productVision}
-Target Audience: ${manifestoContext.targetAudience}
-Business Goals: ${manifestoContext.businessGoals.join(', ')}
-Key Question Areas: ${manifestoContext.keyQuestionAreas.join(', ')}
-
-Previous conversation context: ${conversationHistory.join(' | ')}
-
-Generate a question that directly serves the business goals and uncovers insights about the target audience.`;
-
     const response = await apiRequest<{ question: Partial<Question> }>('/api/ai/generate-manifesto-question', {
       method: 'POST',
-      body: JSON.stringify({ prompt: sanitizeInput(prompt) }),
+      body: JSON.stringify({
+        manifestoContext,
+        conversationHistory
+      }),
     });
 
     if (response.question) {

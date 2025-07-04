@@ -226,36 +226,75 @@ export class SupabaseService {
       throw new Error('Form ID, title, and owner ID are required');
     }
 
-    return this.retryOperation(async () => {
-      const { data, error } = await supabase
-        .from('forms')
-        .insert({
-          id: form.id,
-          title: form.title,
-          description: form.description || '',
-          questions: form.questions || [],
-          settings: {
-            intelligent_follow_ups: form.intelligentFollowUps || false,
-            is_public: true
-          },
-          owner_id: ownerId,
-          views: 0
-        })
-        .select()
-        .single();
+    // Import generateFormId for fallback ID generation
+    const { generateFormId } = await import('./utils');
+    
+    let formToCreate = { ...form };
+    let attempts = 0;
+    const maxAttempts = 5;
 
-      if (error) {
-        this.handleError(error, 'Create form');
+    return this.retryOperation(async () => {
+      while (attempts < maxAttempts) {
+        attempts++;
+        
+        const { data, error } = await supabase
+          .from('forms')
+          .insert({
+            id: formToCreate.id,
+            title: formToCreate.title,
+            description: formToCreate.description || '',
+            questions: formToCreate.questions || [],
+            settings: {
+              intelligent_follow_ups: formToCreate.intelligentFollowUps || false,
+              is_public: true
+            },
+            owner_id: ownerId,
+            views: 0
+          })
+          .select()
+          .single();
+
+        // Handle duplicate key conflict
+        if (error && error.code === '23505' && error.message.includes('forms_pkey')) {
+          console.warn(`Form ID collision detected (${formToCreate.id}), generating new ID...`);
+          formToCreate.id = generateFormId();
+          continue; // Try again with new ID
+        }
+        
+        // Handle other errors
+        if (error) {
+          this.handleError(error, 'Create form');
+        }
+        
+        // Success - break out of retry loop
+        if (data) {
+          break;
+        }
       }
       
-      if (form.manifesto && data) {
+      if (attempts >= maxAttempts) {
+        throw new Error('Failed to create form after multiple attempts due to ID conflicts');
+      }
+      
+      // Get the final data (should be available after successful insertion)
+      const { data } = await supabase
+        .from('forms')
+        .select()
+        .eq('id', formToCreate.id)
+        .single();
+      
+      if (!data) {
+        throw new Error('Failed to retrieve created form');
+      }
+      
+      if (formToCreate.manifesto && data) {
         try {
           await this.upsertFormManifesto(data.id, {
-            productVision: form.manifestoData?.productVision || '',
-            targetAudience: form.manifestoData?.targetAudience || '',
-            businessGoals: form.manifestoData?.businessGoals || [],
-            keyQuestionAreas: form.manifestoData?.keyQuestionAreas || [],
-            conversationTone: form.manifestoData?.conversationTone || 'friendly',
+            productVision: formToCreate.manifestoData?.productVision || '',
+            targetAudience: formToCreate.manifestoData?.targetAudience || '',
+            businessGoals: formToCreate.manifestoData?.businessGoals || [],
+            keyQuestionAreas: formToCreate.manifestoData?.keyQuestionAreas || [],
+            conversationTone: formToCreate.manifestoData?.conversationTone || 'friendly',
           });
         } catch (manifestoError) {
           console.error(`Failed to save manifesto for form ${data.id}:`, manifestoError);
@@ -667,10 +706,34 @@ export class SupabaseService {
       const expiresAt = new Date();
       expiresAt.setHours(expiresAt.getHours() + ttlHours);
 
+      // Extract form_id from cache key for RLS policy
+      // Cache keys are like: "form_schema_analysis_form_48592_1751575663275"
+      let formId = '';
+      const formAnalysisMatch = cacheKey.match(/form_schema_analysis_([^_]+)_/);
+      const manifestoAnalysisMatch = cacheKey.match(/manifesto_analysis_([^_]+)_/);
+      
+      if (formAnalysisMatch) {
+        formId = formAnalysisMatch[1];
+      } else if (manifestoAnalysisMatch) {
+        formId = manifestoAnalysisMatch[1];
+      } else {
+        // Try to extract any form ID pattern
+        const generalMatch = cacheKey.match(/(?:^|_)(form_[a-zA-Z0-9]+)(?:_|$)/);
+        if (generalMatch) {
+          formId = generalMatch[1];
+        }
+      }
+
+      if (!formId) {
+        console.warn('Could not extract form_id from cache key:', cacheKey);
+        return; // Skip caching if we can't determine the form_id
+      }
+
       const { error } = await supabase
         .from('analytics_cache')
         .upsert({
           cache_key: cacheKey,
+          form_id: formId,
           cache_data: data,
           expires_at: expiresAt.toISOString()
         }, {

@@ -3,9 +3,27 @@ import { validateFormDataWithRetry, sanitizeInput } from './validation';
 import { generateFormId } from './utils';
 import { AnalysisCache } from './utils';
 import { supabaseService } from './supabaseService';
+import { devLog, devWarn, devError } from './utils';
 
-// Configuration for the backend API
-const API_BASE_URL = (import.meta as any).env?.VITE_API_URL || 'http://localhost:5000';
+// Configuration for the backend API (Supabase Edge Functions)
+// Priority:
+// 1. Explicit VITE_API_URL env variable
+// 2. Derive from VITE_SUPABASE_URL (works for both local `supabase functions serve` and deployed project)
+// 3. Fallback to local Supabase CLI default
+const _env = (import.meta as any).env ?? {};
+const _supabaseUrl: string | undefined = _env.VITE_SUPABASE_URL?.replace(/\/$/, '');
+
+// When VITE_SUPABASE_URL is provided, the Edge Functions base is `${SUPABASE_URL}/functions/v1/ai`
+// ("ai" = function name) – keep in sync with `supabase/functions/ai`.
+const _derivedApiUrl = _supabaseUrl ? `${_supabaseUrl}/functions/v1/ai` : undefined;
+
+// Default local development URL for `supabase functions serve`
+const _localDefault = 'http://localhost:54321/functions/v1/ai';
+
+const API_BASE_URL: string = _env.VITE_API_URL || _derivedApiUrl || _localDefault;
+// Debug: Log the API URL being used
+devLog('🔧 API_BASE_URL:', API_BASE_URL);
+devLog('🔧 VITE_API_URL env var:', (import.meta as any).env?.VITE_API_URL);
 
 interface APIError {
   error: string;
@@ -42,11 +60,15 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}, timeou
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   
+  // Get the Supabase anon key for authorization
+  const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
+  
   try {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseAnonKey}`,
         ...options.headers,
       },
       signal: controller.signal,
@@ -143,7 +165,7 @@ export async function generateFormSchema(prompt: string): Promise<FormSchema> {
             }
         };
         
-        console.log('✅ Generated form schema with manifesto:', {
+        devLog('✅ Generated form schema with manifesto:', {
             hasManifesto: !!formSchema.manifesto,
             hasManifestoData: !!formSchema.manifestoData,
             manifestoLength: formSchema.manifesto?.length,
@@ -153,7 +175,7 @@ export async function generateFormSchema(prompt: string): Promise<FormSchema> {
         const validatedSchema = await validateFormDataWithRetry(formSchema);
         return validatedSchema;
     } catch (error) {
-        console.error("Error generating form schema:", error);
+        devError("Error generating form schema:", error);
         
         // If validation fails, try to repair the data
         if (response) {
@@ -166,11 +188,11 @@ export async function generateFormSchema(prompt: string): Promise<FormSchema> {
                 });
                 
                 if (repairResult.success && repairResult.form) {
-                    console.log('Form data repaired successfully');
+                    devLog('Form data repaired successfully');
                     return repairResult.form;
                 }
             } catch (repairError) {
-                console.warn('Form repair failed:', repairError);
+                devWarn('Form repair failed:', repairError);
             }
         }
         
@@ -394,7 +416,7 @@ export async function generateIntelligentFollowUp(
     const { optimizedContext, qualityMetrics } = optimizeConversationContext(sanitizedContext);
     
     try {
-        console.log('🌐 Making API request to /api/ai/generate-intelligent-followup-enhanced');
+        devLog('🌐 Making API request to /api/ai/generate-intelligent-followup-enhanced');
         
         const requestBody = { 
             formManifesto: sanitizedManifesto,
@@ -411,18 +433,18 @@ export async function generateIntelligentFollowUp(
             }
         };
         
-        console.log('📤 Request body:', JSON.stringify(requestBody, null, 2));
+        devLog('📤 Request body:', JSON.stringify(requestBody, null, 2));
         
         const followup = await apiRequest<Partial<Question> | null>('/api/ai/generate-intelligent-followup-enhanced', {
             method: 'POST',
             body: JSON.stringify(requestBody),
         }, 15000); // Longer timeout for intelligent analysis
         
-        console.log('📥 API response:', followup);
+        devLog('📥 API response:', followup);
         
         return followup;
     } catch (error) {
-        console.error("Error generating intelligent follow-up:", error);
+        devError("Error generating intelligent follow-up:", error);
         return null;
     }
 }
@@ -466,71 +488,122 @@ export async function analyzeFormSchema(formSchema: FormSchema): Promise<FormAna
 
         const analysis = await apiRequest<FormAnalysis>('/api/ai/analyze-form', {
             method: 'POST',
-            body: JSON.stringify({ form: sanitizedSchema }),
+            body: JSON.stringify({ formSchema: sanitizedSchema }),
         });
         
         return analysis;
     } catch (error) {
-        console.error("Error analyzing form schema:", error);
+        devError("Error analyzing form schema:", error);
         throw new Error("Failed to analyze form schema. The AI service may be temporarily unavailable.");
     }
 }
 
 export async function analyzeFormSchemaWithCache(formSchema: FormSchema): Promise<FormAnalysis> {
     const cacheKey = `form_schema_analysis_${formSchema.id}_${new Date(formSchema.updatedAt).getTime()}`;
+    const localStorageKey = `analysis_cache_${cacheKey}`;
+    const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
     
     try {
-        // Check database cache first
-        const cachedAnalysis = await supabaseService.getAnalysisCache(cacheKey);
-        if (cachedAnalysis) {
-            console.log("Using cached form schema analysis from database.");
-            return cachedAnalysis;
+        // 1. Check localStorage cache first (faster and more reliable)
+        const localCached = localStorage.getItem(localStorageKey);
+        if (localCached) {
+            try {
+                const parsed = JSON.parse(localCached);
+                if (Date.now() - parsed.timestamp < CACHE_TTL_MS) {
+                    devLog("Using cached form schema analysis from localStorage.");
+                    return parsed.data;
+                }
+            } catch (parseError) {
+                devWarn("Failed to parse localStorage cache:", parseError);
+                localStorage.removeItem(localStorageKey);
+            }
         }
 
-        // If not in cache, generate new analysis
+        // 2. Check database cache as fallback
+        try {
+            const cachedAnalysis = await supabaseService.getAnalysisCache(cacheKey);
+            if (cachedAnalysis) {
+                devLog("Using cached form schema analysis from database.");
+                // Also store in localStorage for next time
+                localStorage.setItem(localStorageKey, JSON.stringify({
+                    timestamp: Date.now(),
+                    data: cachedAnalysis
+                }));
+                return cachedAnalysis;
+            }
+        } catch (dbError) {
+            devWarn("Database cache check failed, continuing with fresh analysis:", dbError);
+        }
+
+        // 3. Generate new analysis
+        devLog("Generating fresh form schema analysis for:", formSchema.title);
         const analysis = await analyzeFormSchema(formSchema);
         
-        // Store in database cache for 24 hours
-        await supabaseService.setAnalysisCache(cacheKey, analysis, 24);
+        devLog("Raw analysis result:", analysis);
+        
+        // Validate analysis structure
+        if (!analysis || typeof analysis !== 'object') {
+            devError("Invalid analysis result received:", analysis);
+            throw new Error("Invalid analysis result from API");
+        }
+        
+        // 4. Store in localStorage (always works)
+        try {
+            localStorage.setItem(localStorageKey, JSON.stringify({
+                timestamp: Date.now(),
+                data: analysis
+            }));
+            devLog("Analysis cached in localStorage");
+        } catch (localStorageError) {
+            devWarn("Failed to cache in localStorage:", localStorageError);
+        }
+        
+        // 5. Try to store in database cache (may fail due to RLS)
+        try {
+            await supabaseService.setAnalysisCache(cacheKey, analysis, 24);
+            devLog("Analysis cached in database");
+        } catch (dbCacheError) {
+            devWarn("Database cache failed (expected due to RLS), but localStorage cache succeeded:", dbCacheError);
+        }
         
         return analysis;
     } catch (error) {
-        console.error("Error analyzing form schema with cache:", error);
+        devError("Error analyzing form schema with cache:", error);
         // Fallback to generating analysis without caching on error
         return analyzeFormSchema(formSchema);
     }
 }
 
 export async function analyzeFormResponses(formSchema: FormSchema, responses: any[]): Promise<any> {
-    if (responses.length === 0) {
-        return {
-            overview: { totalResponses: 0, mainThemes: [], overallSentiment: 'neutral' },
-            keyInsights: [],
-            recommendations: []
-        };
-    }
-
     try {
-        const sanitizedSchema = { ...formSchema, questions: formSchema.questions.map(q => ({...q, label: sanitizeInput(q.label)})) };
-        const sanitizedResponses = responses.map(r => {
-            const sanitizedAnswers: Record<string, any> = {};
-            for (const key in r.answers) {
-                sanitizedAnswers[key] = sanitizeInput(r.answers[key]);
-            }
-            return { ...r, answers: sanitizedAnswers };
-        });
-
         const analysis = await apiRequest<any>('/api/ai/analyze-form-responses', {
             method: 'POST',
             body: JSON.stringify({ 
-                formSchema: sanitizedSchema,
-                responses: sanitizedResponses,
+                formSchema, 
+                responses 
             }),
-        }, 60000); // 60-second timeout for response analysis
-
+        }, 60000); // 60 second timeout for analysis
+        
         return analysis;
     } catch (error) {
-        console.error("Error analyzing form responses:", error);
-        throw new Error("Failed to analyze responses. The AI service may be temporarily unavailable.");
+        devError("Error analyzing form responses:", error);
+        throw error;
+    }
+}
+
+export async function analyzeManifestoResponses(formSchema: FormSchema, responses: any[]): Promise<any> {
+    try {
+        const analysis = await apiRequest<any>('/api/ai/analyze-manifesto-responses', {
+            method: 'POST',
+            body: JSON.stringify({ 
+                formSchema, 
+                responses 
+            }),
+        }, 60000); // 60 second timeout for analysis
+        
+        return analysis;
+    } catch (error) {
+        devError("Error analyzing manifesto responses:", error);
+        throw error;
     }
 }

@@ -4,6 +4,7 @@ import { analyzeFormSchemaWithCache } from '../lib/gemini';
 import { generateFormId } from '../lib/utils';
 import { supabaseService } from '../lib/supabaseService';
 import { useAuthStore } from './authStore';
+import { devLog, devWarn, devError } from '../lib/utils';
 
 interface FormState {
   // State
@@ -56,7 +57,7 @@ export const useFormStore = create<FormState>((set, get) => ({
       const stored = localStorage.getItem('pendingForm');
       return stored ? JSON.parse(stored) : null;
     } catch (error) {
-      console.warn('Failed to restore pending form from localStorage:', error);
+      devWarn('Failed to restore pending form from localStorage:', error);
       return null;
     }
   })(),
@@ -70,7 +71,7 @@ export const useFormStore = create<FormState>((set, get) => ({
     const { getUserId } = useAuthStore.getState();
     const userId = getUserId();
     
-    console.log('loadForms: userId:', userId);
+    devLog('loadForms: userId:', userId);
     
     if (!userId) {
       set({ error: 'User not authenticated', loading: false });
@@ -80,7 +81,7 @@ export const useFormStore = create<FormState>((set, get) => ({
     try {
       set({ loading: true, error: null });
       
-      console.log('loadForms: Loading forms for user:', userId);
+      devLog('loadForms: Loading forms for user:', userId);
       
       // Verify connection first
       const connected = await supabaseService.verifyConnection();
@@ -89,7 +90,7 @@ export const useFormStore = create<FormState>((set, get) => ({
       }
       
       const forms = await supabaseService.getForms(userId);
-      console.log('loadForms: Loaded forms:', forms);
+      devLog('loadForms: Loaded forms:', forms);
       
       // CRITICAL FIX: Check for forms with manifestos that need repair
       // This automatically repairs manifesto sync issues without requiring admin intervention
@@ -100,24 +101,24 @@ export const useFormStore = create<FormState>((set, get) => ({
         );
         
         if (formsWithManifestos.length > 0) {
-          console.log(`Found ${formsWithManifestos.length} forms with manifestos, checking synchronization...`);
+          devLog(`Found ${formsWithManifestos.length} forms with manifestos, checking synchronization...`);
           
           // Check one form to see if it needs repair
           const formToCheck = formsWithManifestos[0];
           const hasManifestoDataInDB = await supabaseService.checkUserManifestoExists(formToCheck.id);
           
           if (!hasManifestoDataInDB) {
-            console.log('Manifesto sync issue detected, performing automatic repair...');
+            devLog('Manifesto sync issue detected, performing automatic repair...');
             // Batch repair all forms with manifestos
             const repairResult = await supabaseService.repairManifestoSync();
-            console.log('Repair result:', repairResult);
+            devLog('Repair result:', repairResult);
           } else {
-            console.log('Manifesto synchronization appears to be working correctly');
+            devLog('Manifesto synchronization appears to be working correctly');
           }
         }
       } catch (repairError) {
         // Don't fail form loading if repair check fails
-        console.warn('Error checking/repairing manifestos:', repairError);
+        devWarn('Error checking/repairing manifestos:', repairError);
       }
       
       set({ 
@@ -126,7 +127,7 @@ export const useFormStore = create<FormState>((set, get) => ({
         error: null 
       });
     } catch (error: any) {
-      console.error('Error loading forms:', error);
+      devError('Error loading forms:', error);
       set({ 
         error: error.message || 'Failed to load forms', 
         loading: false 
@@ -152,7 +153,7 @@ export const useFormStore = create<FormState>((set, get) => ({
         error: null
       }));
     } catch (error: any) {
-      console.error('Error creating form:', error);
+      devError('Error creating form:', error);
       const errorMessage = error.message || 'Failed to create form';
       set({ error: errorMessage });
       throw new Error(errorMessage);
@@ -172,7 +173,7 @@ export const useFormStore = create<FormState>((set, get) => ({
       const form = await supabaseService.getFormById(id);
       return form || undefined;
     } catch (error: any) {
-      console.error('Error fetching form:', error);
+      devError('Error fetching form:', error);
       set({ error: error.message || 'Failed to fetch form' });
       return undefined;
     }
@@ -198,7 +199,7 @@ export const useFormStore = create<FormState>((set, get) => ({
         error: null
       }));
     } catch (error: any) {
-      console.error('Error updating form:', error);
+      devError('Error updating form:', error);
       const errorMessage = error.message || 'Failed to update form';
       set({ error: errorMessage });
       throw new Error(errorMessage);
@@ -225,7 +226,7 @@ export const useFormStore = create<FormState>((set, get) => ({
         };
       });
     } catch (error: any) {
-      console.error('Error deleting form:', error);
+      devError('Error deleting form:', error);
       const errorMessage = error.message || 'Failed to delete form';
       set({ error: errorMessage });
       throw new Error(errorMessage);
@@ -245,7 +246,7 @@ export const useFormStore = create<FormState>((set, get) => ({
         )
       }));
     } catch (error: any) {
-      console.error('Error incrementing form views:', error);
+      devError('Error incrementing form views:', error);
       // Don't throw error for view counting - it's not critical
     }
   },
@@ -274,7 +275,7 @@ export const useFormStore = create<FormState>((set, get) => ({
 
       return newForm;
     } catch (error: any) {
-      console.error('Error duplicating form:', error);
+      devError('Error duplicating form:', error);
       const errorMessage = error.message || 'Failed to duplicate form';
       set({ error: errorMessage });
       throw new Error(errorMessage);
@@ -283,7 +284,7 @@ export const useFormStore = create<FormState>((set, get) => ({
 
   // Response Management Actions
   addResponse: async (response) => {
-    console.log('FormStore.addResponse called with:', {
+    devLog('FormStore.addResponse called with:', {
       formId: response.formId,
       startedAt: response.startedAt,
       answersCount: Object.keys(response.answers || {}).length,
@@ -294,27 +295,27 @@ export const useFormStore = create<FormState>((set, get) => ({
     // Validate required fields
     if (!response.formId) {
       const error = new Error('Form ID is required for response submission');
-      console.error('FormStore.addResponse validation failed:', error.message);
+      devError('FormStore.addResponse validation failed:', error.message);
       throw error;
     }
 
     if (!response.answers || typeof response.answers !== 'object') {
       const error = new Error('Answers object is required for response submission');
-      console.error('FormStore.addResponse validation failed:', error.message);
+      devError('FormStore.addResponse validation failed:', error.message);
       throw error;
     }
 
     if (!response.startedAt) {
-      console.warn('FormStore.addResponse: startedAt is missing, using current time');
+      devWarn('FormStore.addResponse: startedAt is missing, using current time');
       response.startedAt = new Date().toISOString();
     }
 
     try {
       set({ error: null });
       
-      console.log('FormStore.addResponse: calling supabaseService.submitResponse...');
+      devLog('FormStore.addResponse: calling supabaseService.submitResponse...');
       const responseId = await supabaseService.submitResponse(response);
-      console.log('FormStore.addResponse: response submitted successfully with ID:', responseId);
+      devLog('FormStore.addResponse: response submitted successfully with ID:', responseId);
       
       // Optionally update local state with the new response
       const fullResponse: FormResponse = {
@@ -324,7 +325,7 @@ export const useFormStore = create<FormState>((set, get) => ({
         status: 'completed'
       };
 
-      console.log('FormStore.addResponse: updating local state with response:', fullResponse);
+      devLog('FormStore.addResponse: updating local state with response:', fullResponse);
 
       set((state) => ({
         responses: {
@@ -338,10 +339,10 @@ export const useFormStore = create<FormState>((set, get) => ({
         error: null
       }));
 
-      console.log('FormStore.addResponse: local state updated successfully');
+      devLog('FormStore.addResponse: local state updated successfully');
     } catch (error: any) {
-      console.error('FormStore.addResponse: error submitting response:', error);
-      console.error('FormStore.addResponse: error details:', {
+      devError('FormStore.addResponse: error submitting response:', error);
+      devError('FormStore.addResponse: error details:', {
         message: error.message,
         code: error.code,
         stack: error.stack
@@ -368,11 +369,11 @@ export const useFormStore = create<FormState>((set, get) => ({
       const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
       
       if (existingResponses && lastLoaded && (now - lastLoaded) < CACHE_DURATION) {
-        console.log('Using cached form responses for form:', formId);
+        devLog('Using cached form responses for form:', formId);
         return; // Use cached data
       }
       
-      console.log('Loading fresh form responses for form:', formId);
+      devLog('Loading fresh form responses for form:', formId);
       const freshResponses = await supabaseService.getFormResponses(formId);
       
       set((state) => ({
@@ -381,7 +382,7 @@ export const useFormStore = create<FormState>((set, get) => ({
         error: null
       }));
     } catch (error: any) {
-      console.error('Error loading form responses:', error);
+      devError('Error loading form responses:', error);
       set({ error: error.message });
       throw error;
     }
@@ -391,7 +392,7 @@ export const useFormStore = create<FormState>((set, get) => ({
     try {
       set({ error: null });
       
-      console.log('Force refreshing form responses for form:', formId);
+      devLog('Force refreshing form responses for form:', formId);
       const freshResponses = await supabaseService.getFormResponses(formId);
       
       set((state) => ({
@@ -400,7 +401,7 @@ export const useFormStore = create<FormState>((set, get) => ({
         error: null
       }));
     } catch (error: any) {
-      console.error('Error refreshing form responses:', error);
+      devError('Error refreshing form responses:', error);
       set({ error: error.message });
       throw error;
     }
@@ -414,13 +415,13 @@ export const useFormStore = create<FormState>((set, get) => ({
       try {
         localStorage.setItem('pendingForm', JSON.stringify(form));
       } catch (error) {
-        console.warn('Failed to persist pending form to localStorage:', error);
+        devWarn('Failed to persist pending form to localStorage:', error);
       }
     } else {
       try {
         localStorage.removeItem('pendingForm');
       } catch (error) {
-        console.warn('Failed to remove pending form from localStorage:', error);
+        devWarn('Failed to remove pending form from localStorage:', error);
       }
     }
   },
@@ -432,7 +433,7 @@ export const useFormStore = create<FormState>((set, get) => ({
     try {
       localStorage.removeItem('pendingForm');
     } catch (error) {
-      console.warn('Failed to remove pending form from localStorage:', error);
+      devWarn('Failed to remove pending form from localStorage:', error);
     }
   },
 
@@ -454,10 +455,21 @@ export const useFormStore = create<FormState>((set, get) => ({
   },
 
   analyzeFormInBackground: async (form: FormSchema) => {
-    const { setAnalysis, analysisLoading } = get();
+    const { setAnalysis, analysisLoading, analyses } = get();
     
     // Don't start analysis if already running
-    if (analysisLoading[form.id]) return;
+    if (analysisLoading[form.id]) {
+      devLog('Analysis already in progress for form:', form.id);
+      return;
+    }
+    
+    // Don't start analysis if we already have a valid analysis
+    if (analyses[form.id]) {
+      devLog('Analysis already exists for form:', form.id);
+      return;
+    }
+    
+    devLog('Starting background analysis for form:', form.id);
     
     // Set loading state
     set((state) => ({
@@ -467,8 +479,9 @@ export const useFormStore = create<FormState>((set, get) => ({
     try {
       const analysis = await analyzeFormSchemaWithCache(form);
       setAnalysis(form.id, analysis);
+      devLog('Background analysis completed for form:', form.id);
     } catch (error) {
-      console.error('Background analysis failed:', error);
+      devError('Background analysis failed for form:', form.id, error);
       setAnalysis(form.id, null);
     } finally {
       // Clear loading state
