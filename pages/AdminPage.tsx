@@ -16,8 +16,9 @@ import {
   ExternalLink,
   Sparkles
 } from 'lucide-react';
-import '../lib/cacheUtils'; // Load cache utilities for debugging
-import { devLog } from '../lib/utils';
+
+import { devLog, useIsMobile } from '../lib/utils';
+import MobileDesktopRestriction from '../components/MobileDesktopRestriction';
 
 const AdminPage: React.FC = () => {
   const { getFormsByOwner, responses, analyzeFormInBackground, loadForms, loadFormResponses, forms, loading } = useFormStore();
@@ -25,6 +26,7 @@ const AdminPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortOrder, setSortOrder] = useState('updatedAt-desc');
   const [selectedFilter, setSelectedFilter] = useState<'all' | 'active' | 'draft'>('all');
+  const isMobile = useIsMobile();
 
   // Load forms when component mounts or user changes
   useEffect(() => {
@@ -129,7 +131,7 @@ const AdminPage: React.FC = () => {
     );
   }
 
-  return (
+  const dashboardContent = (
     <div className="max-w-6xl mx-auto px-4 py-8">
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
@@ -272,6 +274,19 @@ const AdminPage: React.FC = () => {
       )}
     </div>
   );
+
+  if (isMobile) {
+    return (
+      <MobileDesktopRestriction 
+        title="Dashboard - Desktop Experience Recommended"
+        description="The dashboard is optimized for desktop use with complex tables and detailed analytics. For the best experience, we recommend using a desktop or laptop computer."
+      >
+        {dashboardContent}
+      </MobileDesktopRestriction>
+    );
+  }
+
+  return dashboardContent;
 };
 
 export default AdminPage;

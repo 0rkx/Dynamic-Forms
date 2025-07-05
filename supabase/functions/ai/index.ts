@@ -131,34 +131,25 @@ Be strategic and ensure the form structure serves the manifesto's goals.`;
 
 // Main request handler
 serve(async (req: Request) => {
-  console.log("=== Function Request ===");
-  console.log("Method:", req.method);
-  console.log("URL:", req.url);
-  console.log("GEMINI_API_KEY available:", !!GEMINI_API_KEY);
-  console.log("GEMINI_API_KEY length:", GEMINI_API_KEY?.length || 0);
+  // Production logging removed for security
   
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
-    console.log("Handling OPTIONS preflight");
     return new Response("ok", { headers: corsHeaders });
   }
 
   const url = new URL(req.url);
   const pathname = url.pathname;
-  console.log("Pathname:", pathname);
 
   // Health check: GET /health
   if (req.method === "GET" && pathname.endsWith("/health")) {
-    console.log("Health check endpoint hit");
     return jsonResponse({ status: "healthy", service: "dynamic-forms-ai" });
   }
 
   // Generate form: POST /api/ai/generate-form
   if (req.method === "POST" && pathname.endsWith("/api/ai/generate-form")) {
-    console.log("Generate form endpoint hit");
     if (!GEMINI_API_KEY) {
-      console.error("GEMINI_API_KEY not found in environment");
-      return jsonResponse({ error: "Configuration Error", message: "GEMINI_API_KEY is not set" }, 500);
+      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
     }
 
     let body: any;
@@ -190,8 +181,6 @@ serve(async (req: Request) => {
     };
 
     try {
-      console.log("Calling Gemini API with key:", GEMINI_API_KEY ? "SET" : "NOT SET");
-      console.log("Gemini payload:", JSON.stringify(geminiPayload, null, 2));
 
       const geminiRes = await fetch(`${GEMINI_BASE_URL}/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
         {
@@ -201,15 +190,13 @@ serve(async (req: Request) => {
         },
       );
 
-      console.log("Gemini response status:", geminiRes.status);
-      console.log("Gemini response headers:", Object.fromEntries(geminiRes.headers.entries()));
+
 
       if (geminiRes.status === 429) {
         return jsonResponse({ error: "Rate Limit Exceeded", message: "AI service is currently busy. Please try again later." }, 429);
       }
       if (!geminiRes.ok) {
         const errorText = await geminiRes.text();
-        console.log("Gemini error response:", errorText);
         return jsonResponse({ error: "AI Service Error", message: "Failed to generate form. Please try again." }, 500);
       }
 
@@ -270,10 +257,8 @@ serve(async (req: Request) => {
 
   // Generate manifesto only: POST /api/ai/generate-manifesto
   if (req.method === "POST" && pathname.endsWith("/api/ai/generate-manifesto")) {
-    console.log("Generate manifesto endpoint hit");
     if (!GEMINI_API_KEY) {
-      console.error("GEMINI_API_KEY not found in environment");
-      return jsonResponse({ error: "Configuration Error", message: "GEMINI_API_KEY is not set" }, 500);
+      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
     }
 
     let body: any;
@@ -342,7 +327,6 @@ MANIFESTO REQUIREMENTS:
       }
       if (!geminiRes.ok) {
         const errorText = await geminiRes.text();
-        console.log("Gemini error response:", errorText);
         return jsonResponse({ error: "AI Service Error", message: "Failed to generate manifesto. Please try again." }, 500);
       }
 
@@ -375,9 +359,9 @@ MANIFESTO REQUIREMENTS:
 
   // Generate follow-up question: POST /api/ai/generate-followup
   if (req.method === "POST" && pathname.endsWith("/api/ai/generate-followup")) {
-    console.log("Generate followup endpoint hit");
+
     if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "GEMINI_API_KEY is not set" }, 500);
+      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
     }
 
     let body: any;
@@ -458,9 +442,9 @@ Make the follow-up question:
 
   // Enhanced follow-up: POST /api/ai/generate-intelligent-followup-enhanced
   if (req.method === "POST" && pathname.endsWith("/api/ai/generate-intelligent-followup-enhanced")) {
-    console.log("Generate intelligent followup enhanced endpoint hit");
+
     if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "GEMINI_API_KEY is not set" }, 500);
+      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
     }
 
     let body: any;
@@ -541,9 +525,9 @@ Return JSON:
 
   // Analyze form: POST /api/ai/analyze-form
   if (req.method === "POST" && pathname.endsWith("/api/ai/analyze-form")) {
-    console.log("Analyze form endpoint hit");
+
     if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "GEMINI_API_KEY is not set" }, 500);
+      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
     }
 
     let body: any;
@@ -637,9 +621,9 @@ Provide analysis in this EXACT JSON format:
 
   // Analyze form responses: POST /api/ai/analyze-form-responses
   if (req.method === "POST" && pathname.endsWith("/api/ai/analyze-form-responses")) {
-    console.log("Analyze form responses endpoint hit");
+
     if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "GEMINI_API_KEY is not set" }, 500);
+      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
     }
 
     let body: any;
@@ -716,9 +700,9 @@ Provide analysis in this JSON format:
 
   // Analyze manifesto responses: POST /api/ai/analyze-manifesto-responses
   if (req.method === "POST" && pathname.endsWith("/api/ai/analyze-manifesto-responses")) {
-    console.log("Analyze manifesto responses endpoint hit");
+
     if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "GEMINI_API_KEY is not set" }, 500);
+      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
     }
 
     let body: any;
@@ -821,9 +805,9 @@ Provide analysis in this EXACT JSON format:
 
   // Generate dual context question: POST /api/ai/generate-dual-context-question
   if (req.method === "POST" && pathname.endsWith("/api/ai/generate-dual-context-question")) {
-    console.log("Generate dual context question endpoint hit");
+
     if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "GEMINI_API_KEY is not set" }, 500);
+      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
     }
 
     let body: any;
@@ -915,9 +899,9 @@ Return JSON:
 
   // Generate manifesto question: POST /api/ai/generate-manifesto-question
   if (req.method === "POST" && pathname.endsWith("/api/ai/generate-manifesto-question")) {
-    console.log("Generate manifesto question endpoint hit");
+
     if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "GEMINI_API_KEY is not set" }, 500);
+      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
     }
 
     let body: any;
@@ -999,9 +983,9 @@ Return JSON:
 
   // Analyze dual context conversation: POST /api/ai/analyze-dual-context-conversation
   if (req.method === "POST" && pathname.endsWith("/api/ai/analyze-dual-context-conversation")) {
-    console.log("Analyze dual context conversation endpoint hit");
+
     if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "GEMINI_API_KEY is not set" }, 500);
+      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
     }
 
     let body: any;

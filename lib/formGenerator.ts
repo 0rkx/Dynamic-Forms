@@ -53,7 +53,7 @@ export async function generateFormWithRetry(
     attempts++;
     
     try {
-      console.log(`Form generation attempt ${attempts}/${maxRetries}`);
+              // Production logging removed
       
       // Generate the initial form schema
       const rawForm = await generateFormSchema(prompt);
@@ -73,7 +73,7 @@ export async function generateFormWithRetry(
       
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
-      console.warn(`Form generation attempt ${attempts} failed:`, lastError);
+              // Form generation attempt failed
       
       // If this is the last attempt and fallback is enabled, create a basic form
       if (attempts === maxRetries && fallbackOnError) {
@@ -277,7 +277,7 @@ export async function repairFormData(
     attempts++;
     
     try {
-      console.log(`Form repair attempt ${attempts}/${maxRetries}`);
+              // Production logging removed
       
       // Normalize data if enabled
       const formToValidate = normalizeData ? normalizeFormData(formData) : formData;
@@ -294,7 +294,7 @@ export async function repairFormData(
       
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
-      console.warn(`Form repair attempt ${attempts} failed:`, lastError);
+              // Form repair attempt failed
       
       // If auto-retry is disabled, break immediately
       if (!enableAutoRetry) {

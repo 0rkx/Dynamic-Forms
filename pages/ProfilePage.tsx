@@ -5,6 +5,8 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Card } from '../components/ui/Card';
 import { useToast } from '../components/ui/Toast';
+import { useIsMobile } from '../lib/utils';
+import MobileDesktopRestriction from '../components/MobileDesktopRestriction';
 
 const containerVariants: Variants = {
   hidden: { opacity: 0, y: 20 },
@@ -26,6 +28,7 @@ const itemVariants: Variants = {
 const ProfilePage: React.FC = () => {
   const { user, updateProfile, signOut, getDisplayName } = useAuthStore();
   const { addToast } = useToast();
+  const isMobile = useIsMobile();
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [formData, setFormData] = useState({
@@ -61,7 +64,6 @@ const ProfilePage: React.FC = () => {
       // The user state will be automatically updated by the auth store
       // which will trigger the useEffect to update the form data
     } catch (error) {
-      console.error('Failed to update profile:', error);
       addToast({
         type: 'error',
         title: 'Update Failed',
@@ -109,7 +111,7 @@ const ProfilePage: React.FC = () => {
 
   const displayName = getDisplayName();
 
-  return (
+  const profileContent = (
     <div className="max-w-4xl mx-auto py-8">
       <motion.div
         variants={containerVariants}
@@ -233,6 +235,19 @@ const ProfilePage: React.FC = () => {
       </motion.div>
     </div>
   );
+
+  if (isMobile) {
+    return (
+      <MobileDesktopRestriction
+        title="Profile Settings - Desktop Experience Recommended"
+        description="Profile management and account settings are optimized for desktop use. For the best experience, we recommend using a desktop or laptop computer."
+      >
+        {profileContent}
+      </MobileDesktopRestriction>
+    );
+  }
+
+  return profileContent;
 };
 
 export default ProfilePage; 

@@ -3,7 +3,7 @@ import { validateFormDataWithRetry, sanitizeInput } from './validation';
 import { generateFormId } from './utils';
 import { AnalysisCache } from './utils';
 import { supabaseService } from './supabaseService';
-import { devLog, devWarn, devError } from './utils';
+// Production logging removed
 
 // Configuration for the backend API (Supabase Edge Functions)
 // Priority:
@@ -21,9 +21,7 @@ const _derivedApiUrl = _supabaseUrl ? `${_supabaseUrl}/functions/v1/ai` : undefi
 const _localDefault = 'http://localhost:54321/functions/v1/ai';
 
 const API_BASE_URL: string = _env.VITE_API_URL || _derivedApiUrl || _localDefault;
-// Debug: Log the API URL being used
-devLog('🔧 API_BASE_URL:', API_BASE_URL);
-devLog('🔧 VITE_API_URL env var:', (import.meta as any).env?.VITE_API_URL);
+// Production logging removed
 
 interface APIError {
   error: string;
@@ -165,17 +163,12 @@ export async function generateFormSchema(prompt: string): Promise<FormSchema> {
             }
         };
         
-        devLog('✅ Generated form schema with manifesto:', {
-            hasManifesto: !!formSchema.manifesto,
-            hasManifestoData: !!formSchema.manifestoData,
-            manifestoLength: formSchema.manifesto?.length,
-            manifestoDataKeys: formSchema.manifestoData ? Object.keys(formSchema.manifestoData) : []
-        });
+        // Production logging removed
         
         const validatedSchema = await validateFormDataWithRetry(formSchema);
         return validatedSchema;
     } catch (error) {
-        devError("Error generating form schema:", error);
+        // Production logging removed
         
         // If validation fails, try to repair the data
         if (response) {
@@ -188,11 +181,10 @@ export async function generateFormSchema(prompt: string): Promise<FormSchema> {
                 });
                 
                 if (repairResult.success && repairResult.form) {
-                    devLog('Form data repaired successfully');
                     return repairResult.form;
                 }
             } catch (repairError) {
-                devWarn('Form repair failed:', repairError);
+                // Form repair failed
             }
         }
         
@@ -219,7 +211,7 @@ export async function generateFollowUpQuestion(originalQuestion: Question, userA
         
         return followup;
     } catch (error) {
-        console.error("Error generating follow-up question:", error);
+        // Production logging removed
         return null; // Fail silently for follow-up questions to not break user experience
     }
 }
@@ -416,7 +408,7 @@ export async function generateIntelligentFollowUp(
     const { optimizedContext, qualityMetrics } = optimizeConversationContext(sanitizedContext);
     
     try {
-        devLog('🌐 Making API request to /api/ai/generate-intelligent-followup-enhanced');
+
         
         const requestBody = { 
             formManifesto: sanitizedManifesto,
@@ -433,18 +425,18 @@ export async function generateIntelligentFollowUp(
             }
         };
         
-        devLog('📤 Request body:', JSON.stringify(requestBody, null, 2));
+
         
         const followup = await apiRequest<Partial<Question> | null>('/api/ai/generate-intelligent-followup-enhanced', {
             method: 'POST',
             body: JSON.stringify(requestBody),
         }, 15000); // Longer timeout for intelligent analysis
         
-        devLog('📥 API response:', followup);
+
         
         return followup;
     } catch (error) {
-        devError("Error generating intelligent follow-up:", error);
+
         return null;
     }
 }
@@ -493,7 +485,7 @@ export async function analyzeFormSchema(formSchema: FormSchema): Promise<FormAna
         
         return analysis;
     } catch (error) {
-        devError("Error analyzing form schema:", error);
+
         throw new Error("Failed to analyze form schema. The AI service may be temporarily unavailable.");
     }
 }
@@ -510,11 +502,11 @@ export async function analyzeFormSchemaWithCache(formSchema: FormSchema): Promis
             try {
                 const parsed = JSON.parse(localCached);
                 if (Date.now() - parsed.timestamp < CACHE_TTL_MS) {
-                    devLog("Using cached form schema analysis from localStorage.");
+
                     return parsed.data;
                 }
             } catch (parseError) {
-                devWarn("Failed to parse localStorage cache:", parseError);
+
                 localStorage.removeItem(localStorageKey);
             }
         }
@@ -523,7 +515,7 @@ export async function analyzeFormSchemaWithCache(formSchema: FormSchema): Promis
         try {
             const cachedAnalysis = await supabaseService.getAnalysisCache(cacheKey);
             if (cachedAnalysis) {
-                devLog("Using cached form schema analysis from database.");
+
                 // Also store in localStorage for next time
                 localStorage.setItem(localStorageKey, JSON.stringify({
                     timestamp: Date.now(),
@@ -532,18 +524,18 @@ export async function analyzeFormSchemaWithCache(formSchema: FormSchema): Promis
                 return cachedAnalysis;
             }
         } catch (dbError) {
-            devWarn("Database cache check failed, continuing with fresh analysis:", dbError);
+
         }
 
         // 3. Generate new analysis
-        devLog("Generating fresh form schema analysis for:", formSchema.title);
+
         const analysis = await analyzeFormSchema(formSchema);
         
-        devLog("Raw analysis result:", analysis);
+
         
         // Validate analysis structure
         if (!analysis || typeof analysis !== 'object') {
-            devError("Invalid analysis result received:", analysis);
+
             throw new Error("Invalid analysis result from API");
         }
         
@@ -553,22 +545,22 @@ export async function analyzeFormSchemaWithCache(formSchema: FormSchema): Promis
                 timestamp: Date.now(),
                 data: analysis
             }));
-            devLog("Analysis cached in localStorage");
+
         } catch (localStorageError) {
-            devWarn("Failed to cache in localStorage:", localStorageError);
+
         }
         
         // 5. Try to store in database cache (may fail due to RLS)
         try {
             await supabaseService.setAnalysisCache(cacheKey, analysis, 24);
-            devLog("Analysis cached in database");
+
         } catch (dbCacheError) {
-            devWarn("Database cache failed (expected due to RLS), but localStorage cache succeeded:", dbCacheError);
+
         }
         
         return analysis;
     } catch (error) {
-        devError("Error analyzing form schema with cache:", error);
+
         // Fallback to generating analysis without caching on error
         return analyzeFormSchema(formSchema);
     }
@@ -586,7 +578,7 @@ export async function analyzeFormResponses(formSchema: FormSchema, responses: an
         
         return analysis;
     } catch (error) {
-        devError("Error analyzing form responses:", error);
+
         throw error;
     }
 }
@@ -603,7 +595,7 @@ export async function analyzeManifestoResponses(formSchema: FormSchema, response
         
         return analysis;
     } catch (error) {
-        devError("Error analyzing manifesto responses:", error);
+
         throw error;
     }
 }

@@ -61,30 +61,28 @@ const loadGapi = (): Promise<void> => {
 // Load Google API with modern approach
 const loadGoogleAPI = (): Promise<void> => {
     return new Promise((resolve, reject) => {
-        console.log('loadGoogleAPI: Starting...');
+
         
         if (typeof window !== 'undefined' && (window as any).gapi && (window as any).google) {
-            console.log('loadGoogleAPI: APIs already loaded');
+
             gapi = (window as any).gapi;
             resolve();
             return;
         }
 
-        console.log('loadGoogleAPI: Loading Google API script...');
+
         const script = document.createElement('script');
         script.src = 'https://apis.google.com/js/api.js';
         
         script.onload = async () => {
-            console.log('loadGoogleAPI: Google API script loaded');
+
             gapi = (window as any).gapi;
             
             try {
-                console.log('loadGoogleAPI: Loading gapi client with proper error handling...');
+
                 await loadGapi();
                 
-                console.log('loadGoogleAPI: Debugging gapi.client.init parameters...');
-                
-                // Debug each parameter before initialization
+                    // Production logging removed
                 console.log('🔍 Parameter Check:', {
                     apiKey: GOOGLE_API_KEY ? `${GOOGLE_API_KEY.substring(0, 10)}...` : '❌ MISSING',
                     clientId: GOOGLE_CLIENT_ID ? `${GOOGLE_CLIENT_ID.substring(0, 20)}...` : '❌ MISSING',
@@ -102,7 +100,7 @@ const loadGoogleAPI = (): Promise<void> => {
                     throw new Error('❌ VITE_GOOGLE_CLIENT_ID is not defined. Check your .env file and restart the dev server.');
                 }
                 
-                console.log('loadGoogleAPI: All parameters validated, initializing gapi client...');
+
                 
                 // Modern approach: Use gapi.client.init with all required parameters
                 await gapi.client.init({
@@ -113,10 +111,10 @@ const loadGoogleAPI = (): Promise<void> => {
                     plugin_name: 'DynamicFormsApp'     // Required since 2023
                 });
                 
-                console.log('loadGoogleAPI: Gapi client initialized successfully');
+
                 
                 // Test if Google Sheets API is accessible
-                console.log('🧪 Testing Google Sheets API accessibility...');
+
                 try {
                     // Simple API test - this will fail if Sheets API isn't enabled
                     const testResponse = await gapi.client.request({
@@ -134,19 +132,19 @@ const loadGoogleAPI = (): Promise<void> => {
                         });
                         
                         if (apiError?.status === 401) {
-                            console.log('✅ Google Sheets API is enabled (got 401 - expected without auth)');
+
                             return { apiEnabled: true };
                         } else if (apiError?.status === 403 && apiError?.result?.error?.message?.includes('disabled')) {
                             throw new Error('❌ Google Sheets API is not enabled. Go to Google Cloud Console → APIs & Services → Library → Enable Google Sheets API');
                         } else if (apiError?.status === 403) {
-                            console.log('✅ Google Sheets API is enabled (got 403 - API restrictions working)');
+
                             return { apiEnabled: true };
                         } else {
-                            console.log('⚠️ Unexpected API response:', apiError);
+
                             return { apiEnabled: 'unknown' };
                         }
                     });
-                    console.log('✅ Google Sheets API accessibility test completed');
+
                 } catch (apiTestError: any) {
                     console.error('❌ Google Sheets API test failed:', apiTestError);
                     if (apiTestError?.message?.includes('not enabled')) {
@@ -156,12 +154,12 @@ const loadGoogleAPI = (): Promise<void> => {
                 }
                 
                 // Load Google Identity Services for modern auth
-                console.log('loadGoogleAPI: Loading Google Identity Services...');
+
                 const gsiScript = document.createElement('script');
                 gsiScript.src = 'https://accounts.google.com/gsi/client';
                 
                 gsiScript.onload = () => {
-                    console.log('loadGoogleAPI: Google Identity Services loaded');
+
                     const google = (window as any).google;
                     
                     if (!google || !google.accounts || !google.accounts.oauth2) {
@@ -171,7 +169,7 @@ const loadGoogleAPI = (): Promise<void> => {
                     }
                     
                     try {
-                        console.log('loadGoogleAPI: Initializing token client...');
+
                         tokenClient = google.accounts.oauth2.initTokenClient({
                             client_id: GOOGLE_CLIENT_ID,
                             scope: SCOPES,
@@ -191,10 +189,10 @@ const loadGoogleAPI = (): Promise<void> => {
                                     }
                                 }
                                 accessToken = response.access_token;
-                                console.log('loadGoogleAPI: Access token received successfully');
+
                             },
                         });
-                        console.log('loadGoogleAPI: Token client initialized successfully');
+
                         resolve();
                     } catch (tokenClientError: any) {
                         console.error('loadGoogleAPI: Error initializing token client:', tokenClientError);
@@ -256,7 +254,7 @@ ${getOriginErrorMessage()}`));
             reject(new Error('Failed to load Google API script from https://apis.google.com/js/api.js'));
         };
         
-        console.log('loadGoogleAPI: Appending script to document head');
+
         document.head.appendChild(script);
     });
 };
@@ -274,7 +272,7 @@ const signInToGoogle = (): Promise<void> => {
             return;
         }
 
-        console.log('signInToGoogle: Initiating Google OAuth flow...');
+
 
         // Set up callback for the token client
         tokenClient.callback = (response: any) => {
@@ -305,12 +303,12 @@ const signInToGoogle = (): Promise<void> => {
             }
             
             accessToken = response.access_token;
-            console.log('signInToGoogle: Access token received and stored');
+
             
             // Set the token for gapi.client (modern approach)
             try {
                 gapi.client.setToken({ access_token: accessToken });
-                console.log('signInToGoogle: Token set for gapi.client');
+
                 resolve();
             } catch (tokenSetError) {
                 console.error('signInToGoogle: Error setting token for gapi.client:', tokenSetError);
@@ -320,7 +318,7 @@ const signInToGoogle = (): Promise<void> => {
 
         try {
             // Request an access token with explicit prompt for better UX
-            console.log('signInToGoogle: Requesting access token...');
+
             tokenClient.requestAccessToken({ 
                 prompt: 'consent',  // Always show consent screen for clarity
                 hint: 'Select or enter the Google account for Sheets access'
@@ -417,16 +415,16 @@ export async function exportToGoogleSheets(
         }
 
         // Load Google API if not already loaded
-        console.log('Loading Google API...');
+
         await loadGoogleAPI();
-        console.log('Google API loaded successfully');
+
 
         // Check if user is authenticated
-        console.log('Checking authentication status...', { isAuthenticated: isGoogleAuthenticated() });
+
         if (!isGoogleAuthenticated()) {
-            console.log('User not authenticated, initiating sign-in...');
+
             await signInToGoogle();
-            console.log('Sign-in completed');
+
         }
 
         // Verify access token is available (it should be set in signInToGoogle)
@@ -434,7 +432,7 @@ export async function exportToGoogleSheets(
             throw new Error('No access token available after authentication');
         }
         
-        console.log('exportToGoogleSheets: Ready to create spreadsheet with authenticated access');
+
 
         // Prepare data similar to CSV export
         const questionsForHeaders = questions.filter(q => q.type !== 'welcome');

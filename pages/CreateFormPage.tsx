@@ -13,6 +13,8 @@ import { FormSchema } from '../types';
 import FormPreview from '../components/FormPreview';
 import FormEditor from '../components/FormEditor';
 import { useToast } from '../components/ui/Toast';
+import { useIsMobile } from '../lib/utils';
+import MobileDesktopRestriction from '../components/MobileDesktopRestriction';
 
 const pageVariants: Variants = {
   initial: { opacity: 0, y: 20 },
@@ -50,6 +52,7 @@ const CreateFormPage: React.FC = () => {
   const { user } = useAuthStore();
   const { examplePrompts, loadConfig } = useConfigStore();
   const { addToast } = useToast();
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     loadConfig();
@@ -59,15 +62,12 @@ const CreateFormPage: React.FC = () => {
     const publishPendingForm = async () => {
       if (user && pendingForm) {
         try {
-          console.log('Publishing pending form after login:', pendingForm.id);
                   await addForm(pendingForm);
         setNewlyCreatedFormId(pendingForm.id);
         setPreviewSchema(null);
         clearPendingForm();
         setShowSuccessMessage(true);
-        console.log('Successfully published pending form');
         } catch (error) {
-          console.error('Error publishing pending form:', error);
           // Don't clear the pending form on error - let user retry
           setError('Failed to publish your form after login. Please try again or check your dashboard.');
         }
@@ -100,7 +100,6 @@ const CreateFormPage: React.FC = () => {
           result.form.manifestoData = manifestoResult.manifestoData;
         } else {
           // Even if manifesto fails, we can proceed with the form
-          console.warn('Could not generate manifesto, but form was created.');
         }
         setPreviewSchema(result.form);
       } else {
@@ -119,19 +118,15 @@ const CreateFormPage: React.FC = () => {
 
     if (user) {
       try {
-        console.log('Publishing form:', formToPublish.id);
         await addForm(formToPublish);
         setNewlyCreatedFormId(formToPublish.id);
         setPreviewSchema(null);
         if (pendingForm) clearPendingForm();
         setShowSuccessMessage(true);
-        console.log('Successfully published form');
       } catch (error) {
-        console.error('Error adding form:', error);
         setError('Failed to publish the form. Please try again.');
       }
     } else {
-      console.log('Setting pending form and navigating to auth');
       setPendingForm(formToPublish);
       navigate('/auth');
     }
@@ -140,16 +135,13 @@ const CreateFormPage: React.FC = () => {
   const handleRetryPendingForm = async () => {
     if (user && pendingForm) {
       try {
-        console.log('Retrying pending form publication:', pendingForm.id);
         await addForm(pendingForm);
         setNewlyCreatedFormId(pendingForm.id);
         setPreviewSchema(null);
         clearPendingForm();
         setError(null);
         setShowSuccessMessage(true);
-        console.log('Successfully published pending form on retry');
       } catch (error) {
-        console.error('Error retrying pending form:', error);
         setError('Failed to publish your form. Please try again or contact support.');
       }
     }
@@ -196,50 +188,62 @@ const CreateFormPage: React.FC = () => {
   const detailedPlaceholder =
     "E.g. Feedback form for a SaaS product. Collect user's name, email (required), satisfaction rating (1-5), feature requests, and additional comments.";
 
+  const previewContent = (
+    <>
+      <motion.div
+        key="preview"
+        variants={pageVariants}
+        initial="initial"
+        animate="animate"
+        className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"
+      >
+        <div className="text-center mb-6 sm:mb-8">
+            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight">Fine-tune Your Form</h1>
+            <p className="mt-2 text-base sm:text-lg text-neutral-600">Edit questions, add logic, and preview your form in real-time.</p>
+        </div>
+
+        <div className="flex flex-col lg:flex-row gap-6 lg:gap-8 items-start">
+            <div className="lg:order-1 w-full lg:w-1/2">
+                <FormEditor 
+                    schema={previewSchema!}
+                    onSchemaChange={setPreviewSchema}
+                />
+            </div>
+            <div className="lg:order-2 w-full lg:w-1/2">
+                <div className="sticky top-4 sm:top-6 lg:top-24">
+                    <FormPreview schema={previewSchema!} />
+                </div>
+            </div>
+        </div>
+
+        <div className="mt-6 sm:mt-8 flex flex-col sm:flex-row justify-center gap-3 sm:gap-4">
+            <Button variant="outline" size="lg" onClick={handleRetry} className="w-full sm:w-auto">
+                Retry with New Prompt
+            </Button>
+            <Button size="lg" onClick={handleAcceptAndPublish} className="w-full sm:w-auto">
+                {user ? 'Publish Form' : 'Sign Up to Publish'}
+            </Button>
+        </div>
+      </motion.div>
+      {shareModal}
+    </>
+  );
+
   if (previewSchema) {
-    return (
-      <>
-        <motion.div
-          key="preview"
-          variants={pageVariants}
-          initial="initial"
-          animate="animate"
-          className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8"
+    if (isMobile) {
+      return (
+        <MobileDesktopRestriction
+          title="Form Builder - Desktop Experience Recommended"
+          description="The form builder with advanced editing features is optimized for desktop use. For the best experience, we recommend using a desktop or laptop computer."
         >
-          <div className="text-center mb-6 sm:mb-8">
-              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight">Fine-tune Your Form</h1>
-              <p className="mt-2 text-base sm:text-lg text-neutral-600">Edit questions, add logic, and preview your form in real-time.</p>
-          </div>
-
-          <div className="flex flex-col lg:flex-row gap-6 lg:gap-8 items-start">
-              <div className="lg:order-1 w-full lg:w-1/2">
-                  <FormEditor 
-                      schema={previewSchema}
-                      onSchemaChange={setPreviewSchema}
-                  />
-              </div>
-              <div className="lg:order-2 w-full lg:w-1/2">
-                  <div className="sticky top-4 sm:top-6 lg:top-24">
-                      <FormPreview schema={previewSchema} />
-                  </div>
-              </div>
-          </div>
-
-          <div className="mt-6 sm:mt-8 flex flex-col sm:flex-row justify-center gap-3 sm:gap-4">
-              <Button variant="outline" size="lg" onClick={handleRetry} className="w-full sm:w-auto">
-                  Retry with New Prompt
-              </Button>
-              <Button size="lg" onClick={handleAcceptAndPublish} className="w-full sm:w-auto">
-                  {user ? 'Publish Form' : 'Sign Up to Publish'}
-              </Button>
-          </div>
-        </motion.div>
-        {shareModal}
-      </>
-    );
+          {previewContent}
+        </MobileDesktopRestriction>
+      );
+    }
+    return previewContent;
   }
 
-  return (
+  const createFormContent = (
     <>
       <motion.div 
         key="create"
@@ -339,6 +343,19 @@ const CreateFormPage: React.FC = () => {
       {shareModal}
     </>
   );
+
+  if (isMobile) {
+    return (
+      <MobileDesktopRestriction
+        title="Form Creator - Desktop Experience Recommended"
+        description="The AI form generator works best on desktop with a larger screen and full keyboard. For optimal form creation, we recommend using a desktop or laptop computer."
+      >
+        {createFormContent}
+      </MobileDesktopRestriction>
+    );
+  }
+
+  return createFormContent;
 };
 
 export default CreateFormPage;

@@ -37,10 +37,10 @@ function App() {
       try {
         const connected = await supabaseService.verifyConnection();
         if (!connected) {
-          console.warn('Database connection verification failed');
+          // Database connection verification failed
         }
       } catch (error) {
-        console.error('Database connection error:', error);
+        // Database connection error
       }
     };
 
@@ -50,7 +50,7 @@ function App() {
     const connectionCheckInterval = setInterval(() => {
       const status = getConnectionStatus();
       if (status === 'error') {
-        console.warn('Database connection lost, attempting to reconnect...');
+        // Database connection lost, attempting to reconnect
         verifyConnection();
       }
     }, 30000); // Check every 30 seconds
@@ -69,7 +69,7 @@ function App() {
       <ToastProvider>
         <Router>
           <Header />
-          <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+          <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6 lg:py-8">
             <Routes>
               {/* Public Routes */}
               <Route path="/" element={<HomePage />} />

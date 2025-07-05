@@ -344,7 +344,7 @@ export async function validateFormDataWithRetry(data: unknown, maxRetries: numbe
       
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      console.warn(`Form validation attempt ${attempt} failed:`, error);
+              // Form validation attempt failed
       
       // If this is the last attempt, throw the error
       if (attempt === maxRetries) {

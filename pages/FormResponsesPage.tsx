@@ -3,7 +3,7 @@ import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion';
 import { Eye, Share2, Edit3, Brain } from 'lucide-react';
 import { analyzeManifestoResponses } from '../lib/gemini';
-import { BulkResponseAnalysisCache } from '../lib/utils';
+import { BulkResponseAnalysisCache, useIsMobile } from '../lib/utils';
 import { useFormStore } from '../store/formStore';
 import { cn } from '../lib/utils';
 import { Button } from '../components/ui/Button';
@@ -14,6 +14,7 @@ import BuilderTab from '../components/admin/BuilderTab';
 import FormPreview from '../components/FormPreview';
 import ShareModal from '../components/ShareModal';
 import BuilderModal from '../components/admin/BuilderModal';
+import MobileDesktopRestriction from '../components/MobileDesktopRestriction';
 
 // Preview Modal Component
 interface PreviewModalProps {
@@ -67,6 +68,7 @@ const FormDetailPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { getFormById, updateForm, loadFormResponses } = useFormStore();
+  const isMobile = useIsMobile();
   
   const [form, setForm] = useState<any>(null);
   const [isLoadingForm, setIsLoadingForm] = useState(true);
@@ -105,10 +107,9 @@ const FormDetailPage: React.FC = () => {
           // If form is deleted or not found, redirect to admin page
           navigate('/admin');
         }
-      } catch (error) {
-        console.error('Error loading form:', error);
-        navigate('/admin');
-      } finally {
+              } catch (error) {
+          navigate('/admin');
+        } finally {
         setIsLoadingForm(false);
       }
     };
@@ -128,9 +129,9 @@ const FormDetailPage: React.FC = () => {
           setEditedQuestions(parsed.form.questions || []);
           loadFormResponses(parsed.form.id);
         }
-      } catch (e) {
-        console.warn('Failed to parse cache', e);
-      }
+              } catch (e) {
+          // Failed to parse cache, ignore
+        }
     }
   }, []);
 
@@ -228,7 +229,6 @@ const FormDetailPage: React.FC = () => {
           await updateForm(id, { title: title.trim() });
           setForm({ ...form, title: title.trim() });
         } catch (error) {
-          console.error('Error updating title:', error);
           setTitle(form.title); // revert on error
         }
     } else {
@@ -277,7 +277,7 @@ const FormDetailPage: React.FC = () => {
     }
   };
 
-  return (
+  const formDetailContent = (
     <div className="max-w-6xl mx-auto">
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
@@ -412,6 +412,19 @@ const FormDetailPage: React.FC = () => {
       )}
     </div>
   );
+
+  if (isMobile) {
+    return (
+      <MobileDesktopRestriction
+        title="Form Management - Desktop Experience Recommended"
+        description="Form management with detailed responses, analytics, and builder tools are optimized for desktop use. For the best experience, we recommend using a desktop or laptop computer."
+      >
+        {formDetailContent}
+      </MobileDesktopRestriction>
+    );
+  }
+
+  return formDetailContent;
 };
 
 export default FormDetailPage;

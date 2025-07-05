@@ -1,5 +1,6 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { useState, useEffect } from 'react';
 import { FormSchema } from "../types";
 
 export function cn(...inputs: ClassValue[]) {
@@ -34,7 +35,6 @@ export const AnalysisCache = {
       localStorage.setItem(cacheKey, JSON.stringify(cacheData));
       return true;
     } catch (error) {
-      console.warn('Failed to cache analysis:', error);
       return false;
     }
   },
@@ -57,7 +57,6 @@ export const AnalysisCache = {
       
       return cacheData.analysis;
     } catch (error) {
-      console.warn('Failed to read analysis cache:', error);
       return null;
     }
   },
@@ -67,7 +66,7 @@ export const AnalysisCache = {
       const cacheKey = AnalysisCache.getCacheKey(formId, questionsHash);
       localStorage.removeItem(cacheKey);
     } catch (error) {
-      console.warn('Failed to clear analysis cache:', error);
+      // Silent fail for cache cleanup
     }
   },
   
@@ -82,7 +81,7 @@ export const AnalysisCache = {
       }
       keysToRemove.forEach(key => localStorage.removeItem(key));
     } catch (error) {
-      console.warn('Failed to clear all analysis cache:', error);
+      // Silent fail for cache cleanup
     }
   }
 };
@@ -112,7 +111,6 @@ export const ResponseAnalysisCache = {
       localStorage.setItem(cacheKey, JSON.stringify(cacheData));
       return true;
     } catch (error) {
-      console.warn('Failed to cache response analysis:', error);
       return false;
     }
   },
@@ -135,7 +133,6 @@ export const ResponseAnalysisCache = {
       
       return cacheData.analysis;
     } catch (error) {
-      console.warn('Failed to read response analysis cache:', error);
       return null;
     }
   },
@@ -145,7 +142,7 @@ export const ResponseAnalysisCache = {
       const cacheKey = ResponseAnalysisCache.getCacheKey(formId, responseId);
       localStorage.removeItem(cacheKey);
     } catch (error) {
-      console.warn('Failed to clear response analysis cache:', error);
+      // Silent fail for cache cleanup
     }
   },
   
@@ -160,7 +157,7 @@ export const ResponseAnalysisCache = {
       }
       keysToRemove.forEach(key => localStorage.removeItem(key));
     } catch (error) {
-      console.warn('Failed to clear all response analysis cache:', error);
+      // Silent fail for cache cleanup
     }
   }
 };
@@ -190,7 +187,6 @@ export const BulkResponseAnalysisCache = {
       localStorage.setItem(cacheKey, JSON.stringify(cacheData));
       return true;
     } catch (error) {
-      console.warn('Failed to cache bulk analysis:', error);
       return false;
     }
   },
@@ -213,7 +209,6 @@ export const BulkResponseAnalysisCache = {
       
       return cacheData.analysis;
     } catch (error) {
-      console.warn('Failed to read bulk analysis cache:', error);
       return null;
     }
   },
@@ -223,7 +218,7 @@ export const BulkResponseAnalysisCache = {
       const cacheKey = BulkResponseAnalysisCache.getCacheKey(formId, responsesHash);
       localStorage.removeItem(cacheKey);
     } catch (error) {
-      console.warn('Failed to clear bulk analysis cache:', error);
+      // Silent fail for cache cleanup
     }
   }
 };
@@ -244,18 +239,14 @@ export const clearLegacyCookieCache = () => {
       if (cachePatterns.some(pattern => cookieName.startsWith(pattern))) {
         // Clear the problematic cookie
         document.cookie = `${cookieName}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/`;
-        console.log(`Cleared legacy cache cookie: ${cookieName}`);
         cleared++;
       }
     });
     
-    if (cleared > 0) {
-      console.log(`✅ Cleared ${cleared} problematic cache cookies that were causing 431 errors`);
-    }
+
     
     return cleared;
   } catch (error) {
-    console.warn('Failed to clear legacy cookie cache:', error);
     return 0;
   }
 };
@@ -277,7 +268,6 @@ export const clearAllCache = () => {
     
     // If total cache size > 2MB, clear older entries
     if (totalSize > 2 * 1024 * 1024) {
-      console.log('Cache size is large, clearing older entries...');
       const cacheKeys = keys.filter(key => 
         key.includes('_analysis_') && localStorage.getItem(key)
       );
@@ -295,21 +285,15 @@ export const clearAllCache = () => {
       
       const toRemove = cacheKeys.slice(0, Math.floor(cacheKeys.length / 2));
       toRemove.forEach(key => localStorage.removeItem(key));
-      
-      console.log(`✅ Cleared ${toRemove.length} old cache entries to free up space`);
     }
   } catch (error) {
-    console.warn('Failed to optimize localStorage cache:', error);
+    // Silent fail for cache optimization
   }
 };
 
 // Auto-cleanup on module load to prevent 431 errors
 if (typeof document !== 'undefined') {
   clearLegacyCookieCache();
-  
-  // Make cleanup functions available globally for debugging
-  (window as any).clearAllCache = clearAllCache;
-  (window as any).clearLegacyCookieCache = clearLegacyCookieCache;
 }
 
 /**
@@ -489,7 +473,6 @@ export function encodeFormForSharing(form: FormSchema): string {
     
     return encoded;
   } catch (error) {
-    console.error('Failed to encode form for sharing:', error);
     throw new Error('Form too large for URL sharing');
   }
 }
@@ -527,7 +510,6 @@ export function decodeFormFromSharing(encoded: string): FormSchema {
     
     return fullForm;
   } catch (error) {
-    console.error('Failed to decode form from sharing:', error);
     throw new Error('Failed to decode form from sharing');
   }
 }
@@ -546,7 +528,6 @@ export function getFormDataFromUrl(): FormSchema | null {
     
     return null;
   } catch (error) {
-    console.error('Failed to extract form data from URL:', error);
     return null;
   }
 }
@@ -569,7 +550,6 @@ export const SharingCache = {
       localStorage.setItem(cacheKey, JSON.stringify(cacheData));
       return true;
     } catch (error) {
-      console.warn('Failed to cache shared form:', error);
       return false;
     }
   },
@@ -591,7 +571,6 @@ export const SharingCache = {
       
       return cacheData.form;
     } catch (error) {
-      console.warn('Failed to read shared form cache:', error);
       return null;
     }
   },
@@ -601,7 +580,7 @@ export const SharingCache = {
       const cacheKey = SharingCache.getCacheKey(formId);
       localStorage.removeItem(cacheKey);
     } catch (error) {
-      console.warn('Failed to clear shared form cache:', error);
+      // Silent fail for cache cleanup
     }
   }
 };
@@ -622,48 +601,52 @@ export function findSharedForm(formId: string): FormSchema | null {
   try {
     const urlFormData = getFormDataFromUrl();
     if (urlFormData && urlFormData.id === formId) {
-      console.log('Found form data in URL parameters');
       return urlFormData;
     }
   } catch (error) {
-    console.warn('Error extracting form from URL:', error);
+    // Silent fail
   }
 
   // Try sharing cache
   try {
     const cachedForm = SharingCache.get(formId);
     if (cachedForm) {
-      console.log('Found form data in sharing cache');
       return cachedForm;
     }
   } catch (error) {
-    console.warn('Error reading sharing cache:', error);
+    // Silent fail
   }
 
   return null;
 }
 
-// Development logging utility
+// Production-safe logging utilities (no-op in production)
 export const devLog = (...args: any[]) => {
-  // Only log in development mode
-  if (import.meta.env.DEV || import.meta.env.VITE_DEBUG === 'true') {
-    console.log(...args);
-  }
+  // No logging in production
 };
 
 export const devWarn = (...args: any[]) => {
-  // Only log warnings in development mode
-  if (import.meta.env.DEV || import.meta.env.VITE_DEBUG === 'true') {
-    console.warn(...args);
-  }
+  // No logging in production
 };
 
 export const devError = (...args: any[]) => {
-  // Always log errors, but with different detail levels
-  if (import.meta.env.DEV || import.meta.env.VITE_DEBUG === 'true') {
-    console.error(...args);
-  } else {
-    // In production, log simplified error messages
-    console.error('An error occurred:', args[0]);
-  }
+  // No logging in production
+};
+
+// Mobile detection hook
+export const useIsMobile = () => {
+  const [isMobile, setIsMobile] = useState(false);
+  
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+  
+  return isMobile;
 };

@@ -47,7 +47,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         error: null 
       });
     } catch (error: any) {
-      console.error('Sign in error:', error);
       set({ 
         error: error.message, 
         authState: 'unauthenticated', 
@@ -80,7 +79,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         });
       }
     } catch (error: any) {
-      console.error('Sign up error:', error);
       set({ 
         error: error.message, 
         authState: 'unauthenticated', 
@@ -100,7 +98,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       // The auth state will be updated by the auth listener
       // when the user returns from Google OAuth
     } catch (error: any) {
-      console.error('Google sign in error:', error);
       set({ 
         error: error.message, 
         authState: 'unauthenticated', 
@@ -120,7 +117,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       // The auth state will be updated by the auth listener
       // when the user returns from Google OAuth
     } catch (error: any) {
-      console.error('Google sign up error:', error);
       set({ 
         error: error.message, 
         authState: 'unauthenticated', 
@@ -144,7 +140,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         error: null 
       });
     } catch (error: any) {
-      console.error('Sign out error:', error);
       set({ error: error.message });
       throw error;
     }
@@ -161,7 +156,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         error: null
       }));
     } catch (error: any) {
-      console.error('Update profile error:', error);
       set({ error: error.message });
       throw error;
     }
@@ -175,7 +169,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       
       // Success message could be shown in the UI
     } catch (error: any) {
-      console.error('Password reset error:', error);
       set({ error: error.message });
       throw error;
     }
@@ -197,8 +190,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
 
     // Listen for auth changes
     const { data: { subscription } } = supabaseAuth.onAuthStateChanged((event, session) => {
-      console.log('Auth state changed:', event, session?.user?.email);
-      
       set({ 
         user: session?.user || null, 
         session,

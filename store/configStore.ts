@@ -54,7 +54,6 @@ export const useConfigStore = create<ConfigStore>((set) => ({
         loading: false,
       });
     } catch (error: any) {
-      console.error('Failed to load app config:', error);
       // Keep the default values that were set during initialization
       set({ error: error.message, loading: false });
     }

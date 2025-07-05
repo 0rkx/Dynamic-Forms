@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /profile/
+Disallow: /api/private/
+
+# Sitemap location
+Sitemap: https://forms.orkx.xyz/sitemap.xml
+
+# Crawl delay (optional, helps with server load)
+Crawl-delay: 1 

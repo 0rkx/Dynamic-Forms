@@ -383,26 +383,7 @@ const FormViewPage: React.FC = () => {
     
     const shouldSkipForBasicInfo = isBasicInfoQuestion;
     
-    // Debug logging for intelligent follow-up system
-    console.log('🧠 Intelligent Follow-up Debug:', {
-      formId: form?.id,
-      intelligentFollowUps: form?.intelligentFollowUps,
-      currentQuestionId: currentQuestion.id,
-      questionType: currentQuestion.type,
-      isFollowUp: currentQuestion.isFollowUp,
-      shouldSkipFollowUp,
-      shouldSkipForBasicInfo,
-      totalFollowUpsShown,
-      currentFollowUpCount,
-      hasManifesto: !!effectiveManifesto,
-      manifestoLength: effectiveManifesto?.length,
-      originalManifesto: form?.manifesto,
-      effectiveManifesto: effectiveManifesto?.substring(0, 100) + '...',
-      value: value,
-      valueType: typeof value,
-      valueLength: typeof value === 'string' ? value.length : 'N/A',
-      meetsLengthRequirement: typeof value === 'string' && value.length > 10
-    });
+                  // Production logging removed for performance and security
     
     if (
       form?.intelligentFollowUps &&
@@ -431,14 +412,6 @@ const FormViewPage: React.FC = () => {
         const newHistoryEntry = { question: currentQuestion, answer: answerText };
         context.conversationHistory.push(newHistoryEntry);
         
-        console.log('🚀 Calling generateIntelligentFollowUp with:', {
-          manifesto: effectiveManifesto?.substring(0, 100) + '...',
-          context: context,
-          currentQuestion: currentQuestion,
-          value: answerText,
-          answersCount: Object.keys(answers).length
-        });
-        
         const followUpResult = await generateIntelligentFollowUp(
           effectiveManifesto,
           context,
@@ -446,8 +419,6 @@ const FormViewPage: React.FC = () => {
           answerText,
           answers
         );
-
-        console.log('🎯 generateIntelligentFollowUp result:', followUpResult);
 
         if (followUpResult && followUpResult.label) {
           // Create a unique follow-up ID that includes the original question ID and timestamp
@@ -465,8 +436,7 @@ const FormViewPage: React.FC = () => {
             originalQuestionId: currentQuestion.id,
           };
           
-          // Log the created follow-up question to debug options
-          console.log('📝 Created follow-up question:', followUpQuestion);
+          // Production logging removed
           
           const newQuestions = [...localQuestions];
           newQuestions.splice(currentQuestionIndex + 1, 0, followUpQuestion);
@@ -477,11 +447,8 @@ const FormViewPage: React.FC = () => {
           setConversationContexts(prev => ({ ...prev, [currentQuestion.id]: context }));
         }
       } catch (error) {
-        console.error("Failed to generate follow-up:", error);
-        
         // Fallback: Create a simple follow-up question if AI generation fails
         if (value && typeof value === 'string' && value.length > 20) {
-          console.log('🔄 Using fallback follow-up generation');
           const fallbackFollowUpId = `${currentQuestion.id}_fallback_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
           
           const fallbackQuestion: Question = {
@@ -522,7 +489,6 @@ const FormViewPage: React.FC = () => {
       
       // PRIMARY: Use the stored AI manifesto from the database whenever it exists
       if (form.manifesto && form.manifesto.trim().length > 0) {
-        console.log('✅ Using stored AI manifesto from form creation');
         setResolvedManifesto(form.manifesto.trim());
         return;
       }
@@ -538,7 +504,6 @@ const FormViewPage: React.FC = () => {
         const manifestoText = manifestoTextParts.join('\n\n').trim();
 
         if (manifestoText) {
-          console.log('✅ Reconstructed manifesto from structured data');
           setResolvedManifesto(manifestoText);
           return;
         }
@@ -555,19 +520,14 @@ const FormViewPage: React.FC = () => {
           const formPrompt = `Create a form about: ${form.title}. ${form.description || ''}. 
             The form has questions about: ${form.questions.map(q => q.label).join(', ')}.`;
           
-          console.log('🤖 No stored manifesto found - generating new AI manifesto for form:', { formId: form.id, prompt: formPrompt });
-          
           const manifestoResult = await generateManifestoOnly(formPrompt);
           
           if (manifestoResult.success && manifestoResult.manifesto) {
-            console.log('✅ New AI manifesto generated successfully');
             setResolvedManifesto(manifestoResult.manifesto);
             return;
-          } else {
-            console.warn('⚠️ AI manifesto generation failed, falling back to simple manifesto');
           }
         } catch (error) {
-          console.error('❌ Failed to generate AI manifesto:', error);
+          // Failed to generate AI manifesto, continue to fallback
         }
       }
       
@@ -587,7 +547,6 @@ const FormViewPage: React.FC = () => {
         simpleManifesto = `We want to understand your needs and gather valuable insights to provide better assistance. Our goal is to learn more about your situation and help you achieve your objectives.`;
       }
       
-      console.log('⚠️ Using simple contextual manifesto as last resort');
       setResolvedManifesto(simpleManifesto);
     };
 

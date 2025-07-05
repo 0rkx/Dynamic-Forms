@@ -33,7 +33,7 @@ export class SupabaseService {
       return await operation();
     } catch (error) {
       if (retries > 0) {
-        console.warn(`Operation failed, retrying... (${retries} attempts left)`);
+        // Operation failed, retrying
         await new Promise(resolve => setTimeout(resolve, this.retryDelay));
         return this.retryOperation(operation, retries - 1);
       }
@@ -573,10 +573,7 @@ export class SupabaseService {
         user_agent: response.userAgent || (typeof navigator !== 'undefined' ? navigator.userAgent : 'Unknown')
       };
 
-      console.log('SupabaseService.submitResponse: attempting to insert data:', {
-        ...insertData,
-        answers: typeof insertData.answers === 'object' ? Object.keys(insertData.answers) : 'not an object'
-      });
+      // Production logging removed
 
       // Test direct anonymous insert to bypass any potential session issues
       const { data, error } = await supabase
@@ -584,63 +581,26 @@ export class SupabaseService {
         .insert(insertData);
 
       if (error) {
-        console.error('SupabaseService.submitResponse: database insert failed:', error);
-        console.error('SupabaseService.submitResponse: error details:', {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-          hint: error.hint
-        });
-
         // Check if it's an RLS policy issue
         if (error.code === '42501' || error.message?.includes('policy')) {
-          console.error('SupabaseService.submitResponse: RLS policy blocking anonymous submission');
           throw new Error('Database security policy is blocking anonymous form submissions. This might be an RLS configuration issue.');
         }
 
         this.handleError(error, 'Submit response');
       }
 
-      console.log('SupabaseService.submitResponse: response inserted successfully, id:', responseId);
+      // Production logging removed
       return responseId;
     });
   }
 
   /**
    * Test anonymous response submission capability
+   * Disabled in production for security
    */
   async testAnonymousSubmission(): Promise<boolean> {
-    try {
-      console.log('Testing anonymous response submission...');
-      
-      const testResponse = {
-        formId: 'test_form_anonymous_check',
-        answers: { test: 'anonymous submission test' },
-        startedAt: new Date().toISOString()
-      };
-
-      const { error } = await supabase
-        .from('form_responses')
-        .insert({
-          form_id: testResponse.formId,
-          answers: testResponse.answers,
-          started_at: testResponse.startedAt,
-          submitted_at: new Date().toISOString(),
-          status: 'completed',
-          user_agent: 'test'
-        });
-
-      if (error) {
-        console.error('Anonymous submission test failed:', error);
-        return false;
-      }
-
-      console.log('Anonymous submission test passed');
-      return true;
-    } catch (error) {
-      console.error('Anonymous submission test error:', error);
-      return false;
-    }
+    // Disabled in production
+    return false;
   }
 
   /**
@@ -685,13 +645,13 @@ export class SupabaseService {
         if (error.code === 'PGRST116') {
           return null; // Not found or expired
         }
-        console.error('Error fetching analysis cache:', error);
+        // Error fetching analysis cache
         return null;
       }
 
       return data?.cache_data || null;
     } catch (error) {
-      console.error('Error fetching analysis cache:', error);
+      // Error fetching analysis cache
       return null;
     }
   }
@@ -725,7 +685,6 @@ export class SupabaseService {
       }
 
       if (!formId) {
-        console.warn('Could not extract form_id from cache key:', cacheKey);
         return; // Skip caching if we can't determine the form_id
       }
 
@@ -741,11 +700,9 @@ export class SupabaseService {
         });
 
       if (error) {
-        console.error('Error setting analysis cache:', error);
         // Don't throw error for caching - it's not critical
       }
     } catch (error) {
-      console.error('Error setting analysis cache:', error);
       // Don't throw error for caching - it's not critical
     }
   }
@@ -758,10 +715,10 @@ export class SupabaseService {
       const { error } = await supabase.rpc('cleanup_expired_cache');
 
       if (error) {
-        console.error('Error cleaning up cache:', error);
+        // Error cleaning up cache
       }
     } catch (error) {
-      console.error('Error cleaning up cache:', error);
+      // Error cleaning up cache
     }
   }
 
@@ -908,132 +865,7 @@ export class SupabaseService {
    * Comprehensive database diagnostics
    */
   async runDatabaseDiagnostics(): Promise<void> {
-    console.log('🔍 Running database diagnostics...');
-    
-    try {
-      // Get current session for use in tests
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      
-      // Test 1: Check if form_responses table exists
-      console.log('📋 Test 1: Checking if form_responses table exists...');
-      const { data: tableCheck, error: tableError } = await supabase
-        .from('form_responses')
-        .select('count')
-        .limit(1);
-      
-      if (tableError) {
-        console.error('❌ form_responses table not found or accessible:', tableError);
-        if (tableError.code === '42P01') {
-          console.error('💡 The database schema has not been applied. Please run the SQL from supabase-schema.sql in your Supabase SQL editor.');
-          return;
-        }
-      } else {
-        console.log('✅ form_responses table exists and is accessible');
-      }
-
-      // Test 2: Check if forms table exists and has data
-      console.log('📋 Test 2: Checking forms table...');
-      const { data: formsData, error: formsError } = await supabase
-        .from('forms')
-        .select('id, title')
-        .limit(3);
-      
-      if (formsError) {
-        console.error('❌ forms table error:', formsError);
-      } else {
-        console.log('✅ forms table accessible. Found', formsData?.length || 0, 'forms');
-      }
-
-      // Test 3: Test anonymous access specifically
-      console.log('📋 Test 3: Testing anonymous response insertion...');
-      
-      // First, get an existing form ID to use for testing
-      let testFormId = 'diagnostic_test';
-      if (formsData && formsData.length > 0) {
-        testFormId = formsData[0].id;
-        console.log('💡 Using existing form for test:', testFormId);
-      } else {
-        console.log('💡 No existing forms found, creating temporary test form...');
-        // Create a temporary form for testing
-        const { data: tempForm, error: tempFormError } = await supabase
-          .from('forms')
-          .insert({
-            id: 'temp_diagnostic_form',
-            title: 'Temporary Diagnostic Form',
-            description: 'This is a temporary form for testing database connectivity',
-            questions: [{ id: 'q1', type: 'text', label: 'Test Question' }],
-            owner_id: session?.user?.id || null
-          })
-          .select()
-          .single();
-          
-        if (tempFormError) {
-          console.log('⚠️ Could not create temporary form, using null form_id for test');
-          testFormId = 'temp_diagnostic_form';
-        } else {
-          testFormId = tempForm.id;
-          console.log('✅ Created temporary form for testing:', testFormId);
-        }
-      }
-      
-      const testResponseId = crypto.randomUUID ? crypto.randomUUID() : `diag-${Date.now()}`;
-      const { data: insertData, error: insertError } = await supabase
-        .from('form_responses')
-        .insert({
-          id: testResponseId,
-          form_id: testFormId,
-          answers: { diagnostic: true, timestamp: new Date().toISOString() },
-          started_at: new Date().toISOString(),
-          submitted_at: new Date().toISOString(),
-          status: 'completed',
-          user_agent: 'diagnostic_test'
-        })
-        .select();
-
-      if (insertError) {
-        console.error('❌ Anonymous insertion failed:', insertError);
-        
-        if (insertError.code === '42501') {
-          console.error('💡 RLS policy is blocking the insertion. The database policies may not be properly configured.');
-        } else if (insertError.code === '23503') {
-          console.error('💡 Foreign key constraint failed. The referenced form may not exist.');
-        } else {
-          console.error('💡 Unexpected error during insertion. Check database configuration.');
-        }
-      } else {
-        console.log('✅ Anonymous insertion successful:', insertData);
-        
-        // Clean up test data
-        await supabase
-          .from('form_responses')
-          .delete()
-          .eq('id', testResponseId);
-        console.log('🧹 Cleaned up test response data');
-        
-        // Clean up temporary form if we created one
-        if (testFormId === 'temp_diagnostic_form') {
-          await supabase
-            .from('forms')
-            .delete()
-            .eq('id', 'temp_diagnostic_form');
-          console.log('🧹 Cleaned up temporary diagnostic form');
-        }
-      }
-
-      // Test 4: Check current user session
-      console.log('📋 Test 4: Checking authentication state...');
-      console.log('User session:', {
-        hasSession: !!session,
-        hasUser: !!session?.user,
-        userId: session?.user?.id,
-        error: sessionError?.message
-      });
-
-    } catch (error) {
-      console.error('❌ Database diagnostics failed:', error);
-    }
-    
-    console.log('🏁 Database diagnostics completed');
+    // Database diagnostics disabled in production for performance and security
   }
 
   // =============================================
@@ -1075,7 +907,7 @@ export class SupabaseService {
     }
 
     return this.retryOperation(async () => {
-      console.log('Upserting form manifesto for form:', formId);
+      // Production logging removed
       
       // Single upsert operation to form_manifestos table
       const { data, error } = await supabase
@@ -1117,9 +949,9 @@ export class SupabaseService {
             onConflict: 'form_id'
           });
         
-        console.log('Successfully synced manifesto to user_manifesto_context');
+        // Successfully synced manifesto to user_manifesto_context
       } catch (syncError) {
-        console.warn('Failed to sync to user_manifesto_context, but manifesto was saved:', syncError);
+        // Failed to sync to user_manifesto_context, but manifesto was saved
         // Don't fail the main operation if sync fails
       }
 
@@ -1136,7 +968,7 @@ export class SupabaseService {
     }
 
     return this.retryOperation(async () => {
-      console.log('Deleting form manifesto for form:', formId);
+      // Production logging removed
       
       // Delete from form_manifestos table
       const { error: manifestoError } = await supabase
@@ -1156,11 +988,11 @@ export class SupabaseService {
           .eq('form_id', formId);
         
         if (contextError) {
-          console.warn('Failed to delete from user_manifesto_context:', contextError);
+          // Failed to delete from user_manifesto_context
           // Don't fail the main operation if this fails
         }
       } catch (syncError) {
-        console.warn('Error deleting from user_manifesto_context:', syncError);
+        // Error deleting from user_manifesto_context
         // Don't fail the main operation if this fails
       }
     });
