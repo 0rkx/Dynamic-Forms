@@ -22,6 +22,7 @@ interface QuestionRendererProps {
 const QuestionRenderer: React.FC<QuestionRendererProps> = ({ question, onAnswer, onNext, onBack, value, isSubmitting, isPreview = false, canGoBack = false }) => {
   const isFollowUp = !!question.isFollowUp;
   const { addToast } = useToast();
+  const questionType = String(question.type);
 
   const handleNextClick = () => {
     if(question.type === 'welcome') {
@@ -42,15 +43,28 @@ const QuestionRenderer: React.FC<QuestionRendererProps> = ({ question, onAnswer,
   };
   
   const renderInput = () => {
-    switch (question.type) {
+    switch (questionType) {
       case 'welcome':
         return null; // No input for welcome screen
       
       case 'text':
       case 'email':
+      case 'number':
+      case 'phone':
+      case 'url':
+      case 'date':
+      case 'time':
+      case 'address':
         return (
           <Input
-            type={question.type === 'email' ? 'email' : 'text'}
+            type={
+              questionType === 'email' ? 'email' :
+              questionType === 'number' ? 'number' :
+              questionType === 'url' ? 'url' :
+              questionType === 'date' ? 'date' :
+              questionType === 'time' ? 'time' :
+              'text'
+            }
             placeholder={question.placeholder || "Type your answer here..."}
             value={value || ''}
             onChange={(e) => onAnswer(question.id, e.target.value)}
@@ -65,6 +79,8 @@ const QuestionRenderer: React.FC<QuestionRendererProps> = ({ question, onAnswer,
         );
       
       case 'textarea':
+      case 'long-text':
+      case 'longtext':
         return (
           <Textarea
             placeholder={question.placeholder || "Type your answer here..."}
@@ -81,9 +97,21 @@ const QuestionRenderer: React.FC<QuestionRendererProps> = ({ question, onAnswer,
         );
 
       case 'multiple-choice':
+      case 'select':
+      case 'dropdown':
+      case 'radio':
+      case 'checkbox':
+      case 'checkboxes':
+      case 'boolean':
+        const choiceOptions = question.options?.length
+          ? question.options
+          : [
+              { label: 'Yes', value: 'yes' },
+              { label: 'No', value: 'no' }
+            ];
         return (
           <div className={cn("mt-4 w-full", isPreview ? "space-y-2" : "space-y-3")}>
-            {question.options?.map((option) => (
+            {choiceOptions.map((option) => (
               <button
                 key={option.value}
                 onClick={() => {
@@ -111,6 +139,8 @@ const QuestionRenderer: React.FC<QuestionRendererProps> = ({ question, onAnswer,
         );
 
       case 'rating':
+      case 'scale':
+      case 'likert':
         const ratingCount = (question.max || 5) - (question.min || 1) + 1;
         const isWideRating = ratingCount > 5;
         
@@ -327,15 +357,30 @@ const QuestionRenderer: React.FC<QuestionRendererProps> = ({ question, onAnswer,
         );
         
       default:
-        return <p className={cn(isPreview ? "text-sm" : "text-base", "text-neutral-500")}>Unsupported question type.</p>;
+        return (
+          <Input
+            type="text"
+            placeholder={question.placeholder || "Type your answer here..."}
+            value={value || ''}
+            onChange={(e) => onAnswer(question.id, e.target.value)}
+            className={cn(
+              "mt-4 w-full",
+              isPreview 
+                ? "text-sm h-10 px-3 py-2 border-2 rounded-xl" 
+                : "text-base h-12 px-4"
+            )}
+            disabled={isSubmitting}
+          />
+        );
     }
   };
 
-  const showNextButton = !['multiple-choice', 'welcome', 'quick-select', 'mood', 'budget-range'].includes(question.type);
-  const showStartButton = question.type === 'welcome';
-  const isRatingAnswered = question.type === 'rating' && value !== undefined;
-  const isSliderAnswered = question.type === 'slider' && value !== undefined;
-  const isConversationBreak = question.type === 'conversation-break';
+  const autoAdvanceTypes = ['multiple-choice', 'select', 'dropdown', 'radio', 'checkbox', 'checkboxes', 'boolean', 'welcome', 'quick-select', 'mood', 'budget-range'];
+  const showNextButton = !autoAdvanceTypes.includes(questionType);
+  const showStartButton = questionType === 'welcome';
+  const isRatingAnswered = ['rating', 'scale', 'likert'].includes(questionType) && value !== undefined;
+  const isSliderAnswered = questionType === 'slider' && value !== undefined;
+  const isConversationBreak = questionType === 'conversation-break';
   
   const nextButtonLabel = () => {
     if (isSubmitting) return <Loader />;

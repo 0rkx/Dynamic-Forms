@@ -242,9 +242,25 @@ export function normalizeQuestionData(question: any): any {
 
   const normalized = { ...question };
 
-  // Fix question type naming
-  if (normalized.type === 'multiple_choice') {
+  const rawType = String(normalized.type || 'text').toLowerCase().replace(/_/g, '-');
+
+  // Fix question type naming and map AI/provider variants to supported app types
+  if (['multiple-choice', 'select', 'dropdown', 'radio'].includes(rawType)) {
     normalized.type = 'multiple-choice';
+  } else if (['checkbox', 'checkboxes', 'boolean'].includes(rawType)) {
+    normalized.type = 'multiple-choice';
+    normalized.options ||= [
+      { label: 'Yes', value: 'yes' },
+      { label: 'No', value: 'no' }
+    ];
+  } else if (['scale', 'likert'].includes(rawType)) {
+    normalized.type = 'rating';
+  } else if (['long-text', 'longtext'].includes(rawType)) {
+    normalized.type = 'textarea';
+  } else if (['welcome', 'text', 'textarea', 'email', 'rating'].includes(rawType)) {
+    normalized.type = rawType;
+  } else {
+    normalized.type = 'text';
   }
 
   // Fix null/undefined description
@@ -273,6 +289,20 @@ export function normalizeQuestionData(question: any): any {
         label: `Option ${index + 1}`
       };
     });
+  }
+
+  if (normalized.type === 'multiple-choice' && (!normalized.options || normalized.options.length === 0)) {
+    normalized.options = [
+      { label: 'Yes', value: 'yes' },
+      { label: 'No', value: 'no' }
+    ];
+  }
+
+  if (normalized.type === 'rating') {
+    normalized.min = Number.isFinite(normalized.min) ? normalized.min : 1;
+    normalized.max = Number.isFinite(normalized.max) ? normalized.max : 5;
+    normalized.minLabel ||= 'Low';
+    normalized.maxLabel ||= 'High';
   }
 
   // Ensure required fields have defaults
