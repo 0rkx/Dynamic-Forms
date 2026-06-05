@@ -8,13 +8,10 @@ import {
 import { generateFormId } from './utils';
 import { validateFormDataWithRetry, sanitizeInput } from './validation';
 
-// Configuration for the backend API (Supabase Edge Functions)
+// Cloudflare Worker API.
+// Leave VITE_API_URL empty in production to call same-origin /api routes.
 const _env = (import.meta as any).env ?? {};
-const _supabaseUrl: string | undefined = _env.VITE_SUPABASE_URL?.replace(/\/$/, '');
-const _derivedApiUrl = _supabaseUrl ? `${_supabaseUrl}/functions/v1/ai` : undefined;
-const _localDefault = 'http://localhost:54321/functions/v1/ai';
-
-const API_BASE_URL: string = _env.VITE_API_URL || _derivedApiUrl || _localDefault;
+const API_BASE_URL: string = (_env.VITE_API_URL ?? '').replace(/\/$/, '');
 
 interface APIError {
   error: string;

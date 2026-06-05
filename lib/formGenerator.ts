@@ -120,12 +120,9 @@ export async function generateManifestoOnly(
   try {
     console.log('📝 Generating manifesto directly via API...');
     
-    // Build the full Edge Function URL (reuse logic from gemini.ts)
+    // Build the Cloudflare Worker API URL.
     const _env: any = (import.meta as any).env ?? {};
-    const _supabaseUrl: string | undefined = _env.VITE_SUPABASE_URL?.replace(/\/$/, '');
-    const _derivedApiUrl = _supabaseUrl ? `${_supabaseUrl}/functions/v1/ai` : undefined;
-    const _localDefault = 'http://localhost:54321/functions/v1/ai';
-    const apiBaseUrl: string = _env.VITE_API_URL || _derivedApiUrl || _localDefault;
+    const apiBaseUrl: string = (_env.VITE_API_URL ?? '').replace(/\/$/, '');
 
     // Call the backend API directly – backend now builds full system prompt
     const response = await fetch(`${apiBaseUrl}/api/ai/generate-manifesto`, {

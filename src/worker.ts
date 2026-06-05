@@ -1,22 +1,29 @@
-// @ts-nocheck
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-
-const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
-const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-2.5-flash-lite";
-const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-const allowedOrigins = (
-  Deno.env.get("ALLOWED_ORIGINS") ??
-  "https://dynamic-forms.pages.dev,http://localhost:5173,http://127.0.0.1:5173"
-)
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-
 type JsonBody = Record<string, unknown> | unknown[] | string | number | boolean | null;
+type AssetsBinding = { fetch(request: Request): Promise<Response> };
 
-function corsHeaders(req: Request): Record<string, string> {
-  const origin = req.headers.get("Origin") ?? "";
-  const allowedOrigin = allowedOrigins.includes(origin) ? origin : allowedOrigins[0] ?? "";
+interface Env {
+  ASSETS: AssetsBinding;
+  GEMINI_API_KEY?: string;
+  GEMINI_MODEL?: string;
+  ALLOWED_ORIGINS?: string;
+}
+
+const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+
+function allowedOrigins(env: Env): string[] {
+  return (
+    env.ALLOWED_ORIGINS ??
+    "https://forms.orkx.xyz,https://dynamic-form-9vd.pages.dev,http://localhost:5173,http://127.0.0.1:5173"
+  )
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+function corsHeaders(request: Request, env: Env): Record<string, string> {
+  const origin = request.headers.get("Origin") ?? "";
+  const origins = allowedOrigins(env);
+  const allowedOrigin = origins.includes(origin) ? origin : origins[0] ?? "";
 
   return {
     "Access-Control-Allow-Origin": allowedOrigin,
@@ -36,9 +43,9 @@ function json(body: JsonBody, status: number, headers: Record<string, string>): 
   });
 }
 
-async function readJson(req: Request): Promise<Record<string, unknown>> {
+async function readJson(request: Request): Promise<Record<string, unknown>> {
   try {
-    return await req.json();
+    return await request.json();
   } catch {
     throw new Response(JSON.stringify({ error: "Invalid Content-Type", message: "Request must be JSON" }), {
       status: 400,
@@ -47,12 +54,14 @@ async function readJson(req: Request): Promise<Record<string, unknown>> {
   }
 }
 
-async function askGemini(systemPrompt: string, userText: string): Promise<unknown> {
-  if (!GEMINI_API_KEY) {
+async function askGemini(env: Env, systemPrompt: string, userText: string): Promise<unknown> {
+  const apiKey = env.GEMINI_API_KEY;
+  const model = env.GEMINI_MODEL ?? "gemini-2.5-flash-lite";
+  if (!apiKey) {
     throw new Error("MISSING_GEMINI_API_KEY");
   }
 
-  const response = await fetch(`${GEMINI_BASE_URL}/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`, {
+  const response = await fetch(`${GEMINI_BASE_URL}/${model}:generateContent?key=${apiKey}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -67,6 +76,12 @@ async function askGemini(systemPrompt: string, userText: string): Promise<unknow
   }
 
   if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    console.error("Gemini request failed", {
+      status: response.status,
+      model,
+      body: errorText.slice(0, 500),
+    });
     throw new Error("GEMINI_REQUEST_FAILED");
   }
 
@@ -95,7 +110,7 @@ function normalizeQuestion(question: any): any {
 
 function normalizeFormSchema(schema: any): any {
   const normalized = { ...schema };
-  normalized.id ??= `form_${crypto.randomUUID().replaceAll("-", "")}`;
+  normalized.id ??= `form_${crypto.randomUUID().replace(/-/g, "")}`;
   normalized.title ??= "Untitled Form";
   normalized.description ??= "";
   normalized.questions = Array.isArray(normalized.questions)
@@ -184,15 +199,20 @@ function promptFor(kind: string, body: Record<string, unknown>): { system: strin
   };
 }
 
-async function handleAi(kind: string, req: Request, headers: Record<string, string>): Promise<Response> {
-  const body = await readJson(req);
+async function handleAi(
+  env: Env,
+  kind: string,
+  request: Request,
+  headers: Record<string, string>
+): Promise<Response> {
+  const body = await readJson(request);
   if ((kind === "generate-form" || kind === "generate-manifesto") && String(body.prompt ?? "").trim().length < 5) {
     return json({ error: "Invalid Prompt", message: "Prompt must be at least 5 characters long" }, 400, headers);
   }
 
   try {
     const { system, user } = promptFor(kind, body);
-    const result = await askGemini(system, user);
+    const result = await askGemini(env, system, user);
 
     if (kind === "generate-form") return json(normalizeFormSchema(result), 200, headers);
     if (kind.includes("followup") && result && typeof result === "object" && !Array.isArray(result)) {
@@ -200,12 +220,14 @@ async function handleAi(kind: string, req: Request, headers: Record<string, stri
     }
     return json(result as JsonBody, 200, headers);
   } catch (error) {
+    if (error instanceof Response) return error;
     if (error instanceof Error && error.message === "MISSING_GEMINI_API_KEY") {
       return json({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500, headers);
     }
     if (error instanceof Error && error.message === "RATE_LIMIT") {
       return json({ error: "Rate Limit Exceeded", message: "AI service is currently busy. Please try again later." }, 429, headers);
     }
+    console.error("AI request failed", error instanceof Error ? error.message : String(error));
     return json({ error: "AI Service Error", message: "Failed to complete AI request. Please try again." }, 500, headers);
   }
 }
@@ -223,19 +245,25 @@ const routes: Record<string, string> = {
   "/api/ai/analyze-dual-context-conversation": "analyze-dual-context-conversation",
 };
 
-serve(async (req: Request) => {
-  const headers = corsHeaders(req);
-  if (req.method === "OPTIONS") return new Response("ok", { headers });
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const headers = corsHeaders(request, env);
+    if (request.method === "OPTIONS") return new Response("ok", { headers });
 
-  const pathname = new URL(req.url).pathname;
-  if (req.method === "GET" && pathname.endsWith("/health")) {
-    return json({ status: "healthy", service: "dynamic-forms-ai" }, 200, headers);
-  }
+    const pathname = new URL(request.url).pathname;
+    if (request.method === "GET" && pathname === "/api/ai/health") {
+      return json({ status: "healthy", service: "dynamic-forms-ai" }, 200, headers);
+    }
 
-  const matchedRoute = Object.keys(routes).find((route) => pathname.endsWith(route));
-  if (req.method === "POST" && matchedRoute) {
-    return handleAi(routes[matchedRoute], req, headers);
-  }
+    const matchedRoute = Object.keys(routes).find((route) => pathname === route);
+    if (request.method === "POST" && matchedRoute) {
+      return handleAi(env, routes[matchedRoute], request, headers);
+    }
 
-  return json({ error: "Not Found", message: "Endpoint not found" }, 404, headers);
-});
+    if (pathname.startsWith("/api/")) {
+      return json({ error: "Not Found", message: "Endpoint not found" }, 404, headers);
+    }
+
+    return env.ASSETS.fetch(request);
+  },
+};
