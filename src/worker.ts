@@ -9,6 +9,7 @@ interface Env {
 }
 
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+const SUPPORTED_QUESTION_TYPES = new Set(["welcome", "text", "textarea", "multiple-choice", "rating", "email"]);
 
 function allowedOrigins(env: Env): string[] {
   return (
@@ -99,12 +100,49 @@ async function askGemini(env: Env, systemPrompt: string, userText: string): Prom
 
 function normalizeQuestion(question: any): any {
   const normalized = { ...question };
-  if (normalized.type === "multiple_choice") normalized.type = "multiple-choice";
+  const rawType = String(normalized.type ?? "text").toLowerCase().replace(/_/g, "-");
+
+  if (rawType === "multiple-choice" || rawType === "select" || rawType === "dropdown" || rawType === "radio") {
+    normalized.type = "multiple-choice";
+  } else if (rawType === "checkbox" || rawType === "checkboxes" || rawType === "boolean") {
+    normalized.type = "multiple-choice";
+    normalized.options ??= [
+      { label: "Yes", value: "yes" },
+      { label: "No", value: "no" },
+    ];
+  } else if (rawType === "scale" || rawType === "likert") {
+    normalized.type = "rating";
+  } else if (rawType === "long-text" || rawType === "longtext") {
+    normalized.type = "textarea";
+  } else if (rawType === "email") {
+    normalized.type = "email";
+  } else if (rawType === "welcome") {
+    normalized.type = "welcome";
+  } else if (!SUPPORTED_QUESTION_TYPES.has(rawType)) {
+    normalized.type = "text";
+  } else {
+    normalized.type = rawType;
+  }
+
   if (Array.isArray(normalized.options)) {
     normalized.options = normalized.options.map((option: any) =>
       typeof option === "string" ? { label: option, value: option } : option
     );
   }
+  if (normalized.type === "multiple-choice" && (!Array.isArray(normalized.options) || normalized.options.length === 0)) {
+    normalized.options = [
+      { label: "Yes", value: "yes" },
+      { label: "No", value: "no" },
+    ];
+  }
+  if (normalized.type === "rating") {
+    normalized.min = Number.isFinite(normalized.min) ? normalized.min : 1;
+    normalized.max = Number.isFinite(normalized.max) ? normalized.max : 5;
+    normalized.minLabel ??= "Low";
+    normalized.maxLabel ??= "High";
+  }
+  normalized.id ??= `q_${crypto.randomUUID().replace(/-/g, "")}`;
+  normalized.label ??= "Question";
   return normalized;
 }
 
@@ -132,8 +170,38 @@ function promptFor(kind: string, body: Record<string, unknown>): { system: strin
 
   if (kind === "generate-form") {
     return {
-      system: `Return only valid JSON for a dynamic form. Shape: {"id":"form_id","title":"string","description":"string","manifesto":"string","manifestoData":{"productVision":"string","targetAudience":"string","businessGoals":["string"],"keyQuestionAreas":["string"],"conversationTone":"friendly|professional|casual|expert"},"questions":[{"id":"welcome","type":"welcome","label":"string","description":"string"},{"id":"q1","type":"text|textarea|multiple-choice|rating|email","label":"string","description":"string","placeholder":"string","required":true,"options":[{"label":"string","value":"string"}]}]}. Include 3-8 strategic questions. First question must be welcome.`,
-      user: `User request: ${prompt}`,
+      system: `You are a senior form strategist. Return only valid JSON, no markdown.
+
+Build forms that collect useful information with the fewest necessary questions.
+
+Allowed question types only:
+- welcome
+- text
+- textarea
+- email
+- multiple-choice
+- rating
+
+Never output unsupported types such as number, phone, date, time, url, select, checkbox, dropdown, file, signature, address, slider, or boolean. Convert them:
+- counts, phone numbers, dates, URLs, names, company names: use text
+- long explanations, goals, concerns, context: use textarea
+- yes/no or fixed choices: use multiple-choice
+- satisfaction, priority, importance, likelihood: use rating
+
+Question rules:
+- First question must be type welcome.
+- Ask 3-7 real questions after welcome.
+- Do not ask redundant confirmation questions.
+- Do not ask follow-up style questions in the initial form.
+- Do not ask "is this correct?" for names, emails, counts, or simple facts.
+- For event attendance counts, use text with a clear label such as "How many people will be attending with you?"
+- Use short, direct labels.
+- multiple-choice questions must include 2-6 options as {"label":"string","value":"string"}.
+- rating questions must include min, max, minLabel, maxLabel.
+
+JSON shape:
+{"id":"form_id","title":"string","description":"string","manifesto":"string","manifestoData":{"productVision":"string","targetAudience":"string","businessGoals":["string"],"keyQuestionAreas":["string"],"conversationTone":"friendly|professional|casual|expert"},"questions":[{"id":"welcome","type":"welcome","label":"string","description":"string"},{"id":"q1","type":"text|textarea|multiple-choice|rating|email","label":"string","description":"string","placeholder":"string","required":true,"options":[{"label":"string","value":"string"}],"min":1,"max":5,"minLabel":"string","maxLabel":"string"}]}`,
+      user: `Create the form requested by the user. User request: ${prompt}`,
     };
   }
 
@@ -146,14 +214,30 @@ function promptFor(kind: string, body: Record<string, unknown>): { system: strin
 
   if (kind === "generate-followup") {
     return {
-      system: `Return only valid JSON for one follow-up question. Shape: {"id":"followup_id","type":"textarea","label":"string","placeholder":"string","required":false}.`,
+      system: `Return only valid JSON for one useful follow-up question, or null if no follow-up is needed.
+
+Do not generate a follow-up for clear factual answers: names, emails, phone numbers, addresses, dates, counts, URLs, company names, or yes/no answers.
+Do not ask confirmation questions like "Is Owais your full name?" or "Is this correct?"
+Only ask a follow-up when the answer reveals ambiguity, motivation, pain, preference, tradeoff, or a detail that directly helps the form goal.
+Allowed output question type: textarea.
+Shape: {"id":"followup_id","type":"textarea","label":"string","placeholder":"string","required":false}`,
       user: `Original question: ${JSON.stringify(body.originalQuestion)}\nUser answer: ${body.userAnswer}`,
     };
   }
 
   if (kind === "generate-intelligent-followup-enhanced") {
     return {
-      system: `Return only valid JSON for one intelligent follow-up. Shape: {"id":"enhanced_followup_id","type":"textarea","label":"string","placeholder":"string","required":false}.`,
+      system: `Return only valid JSON for one intelligent follow-up, or null if the next best action is to continue.
+
+Hard rules:
+- Do not follow up on basic identity/contact/logistics fields: name, email, phone, address, date, time, attendee count, URL, company name.
+- Do not follow up on short clear factual answers like "Owais", "2", "yes", "no", an email address, or a phone number.
+- Never ask confirmation questions such as "Is Owais your correct full name?".
+- Ask a follow-up only when it will uncover useful context, reasoning, constraints, preferences, pain points, or product insight.
+- Follow-ups should feel natural and necessary, not nosy or repetitive.
+- Allowed output question type: textarea.
+
+Shape: {"id":"enhanced_followup_id","type":"textarea","label":"string","placeholder":"string","required":false}`,
       user: JSON.stringify(body),
     };
   }

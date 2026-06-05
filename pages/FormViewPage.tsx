@@ -20,7 +20,6 @@ const progressBarVariants: Variants = {
   initial: { width: 0 },
 };
 
-
 const FormViewPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -342,20 +341,20 @@ const FormViewPage: React.FC = () => {
     
     // Don't generate follow-ups for certain question types
     const skipFollowUpTypes = [
-      'welcome', 
-      'email', 
-      'rating', 
+      'welcome',
+      'email',
+      'rating',
       'quick-select',
-      'name',        // Add name fields
-      'phone',       // Add phone fields  
-      'address',     // Add address fields
-      'number',      // Add number inputs
-      'date',        // Add date inputs
-      'time',        // Add time inputs
-      'url',         // Add URL inputs
-      'file-upload', // Add file uploads
-      'signature',   // Add signature fields
-      'payment'      // Add payment fields
+      'name',
+      'phone',
+      'address',
+      'number',
+      'date',
+      'time',
+      'url',
+      'file-upload',
+      'signature',
+      'payment'
     ];
     const shouldSkipFollowUp = skipFollowUpTypes.includes(currentQuestion.type);
     
@@ -389,7 +388,7 @@ const FormViewPage: React.FC = () => {
       form?.intelligentFollowUps &&
       !currentQuestion.isFollowUp &&
       !shouldSkipFollowUp &&
-      !shouldSkipForBasicInfo &&  // Add the new check
+      !shouldSkipForBasicInfo &&
       totalFollowUpsShown < 10 &&
       currentFollowUpCount < 3 &&
       effectiveManifesto &&
