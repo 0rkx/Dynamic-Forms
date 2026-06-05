@@ -16,7 +16,7 @@ This guide will help you set up Google OAuth authentication in your Supabase pro
 5. Click "Create Credentials" > "OAuth client ID"
 6. Select "Web application"
 7. Add your authorized redirect URIs:
-   - For your Supabase project: `https://rsfmnsxotnetnccrxyvl.supabase.co/auth/v1/callback`
+   - For your Supabase project: `https://fphovkacnxhvdybjwvsb.supabase.co/auth/v1/callback`
    - For production (if different): `https://your-domain.com/auth/v1/callback`
 8. Copy the Client ID and Client Secret
 
@@ -32,7 +32,7 @@ This guide will help you set up Google OAuth authentication in your Supabase pro
 
 1. Make sure your `.env` file has the following variables:
    ```
-   VITE_SUPABASE_URL=https://rsfmnsxotnetnccrxyvl.supabase.co
+   VITE_SUPABASE_URL=https://fphovkacnxhvdybjwvsb.supabase.co
    VITE_SUPABASE_ANON_KEY=your-anon-key
    VITE_GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
    ```
@@ -60,7 +60,7 @@ This guide will help you set up Google OAuth authentication in your Supabase pro
 4. Edit your OAuth 2.0 Client ID
 5. In "Authorized redirect URIs", add exactly this URI:
    ```
-   https://rsfmnsxotnetnccrxyvl.supabase.co/auth/v1/callback
+   https://fphovkacnxhvdybjwvsb.supabase.co/auth/v1/callback
    ```
 6. Click Save
 7. Wait 2-3 minutes for changes to propagate
@@ -85,7 +85,7 @@ console.log('Google Client ID:', import.meta.env.VITE_GOOGLE_CLIENT_ID);
 
 The redirect URI should be:
 ```
-https://rsfmnsxotnetnccrxyvl.supabase.co/auth/v1/callback
+https://fphovkacnxhvdybjwvsb.supabase.co/auth/v1/callback
 ```
 
 ⚠️ **Important**: This URI must match EXACTLY in Google Cloud Console.

@@ -5,22 +5,11 @@ import { AnalysisCache } from './utils';
 import { supabaseService } from './supabaseService';
 // Production logging removed
 
-// Configuration for the backend API (Supabase Edge Functions)
-// Priority:
-// 1. Explicit VITE_API_URL env variable
-// 2. Derive from VITE_SUPABASE_URL (works for both local `supabase functions serve` and deployed project)
-// 3. Fallback to local Supabase CLI default
+// Cloudflare Worker API.
+// Leave VITE_API_URL empty in production to call same-origin /api routes.
 const _env = (import.meta as any).env ?? {};
-const _supabaseUrl: string | undefined = _env.VITE_SUPABASE_URL?.replace(/\/$/, '');
+const API_BASE_URL: string = (_env.VITE_API_URL ?? '').replace(/\/$/, '');
 
-// When VITE_SUPABASE_URL is provided, the Edge Functions base is `${SUPABASE_URL}/functions/v1/ai`
-// ("ai" = function name) – keep in sync with `supabase/functions/ai`.
-const _derivedApiUrl = _supabaseUrl ? `${_supabaseUrl}/functions/v1/ai` : undefined;
-
-// Default local development URL for `supabase functions serve`
-const _localDefault = 'http://localhost:54321/functions/v1/ai';
-
-const API_BASE_URL: string = _env.VITE_API_URL || _derivedApiUrl || _localDefault;
 // Production logging removed
 
 interface APIError {
