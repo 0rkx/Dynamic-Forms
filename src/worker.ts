@@ -47,8 +47,6 @@ function json(body: JsonBody, status: number, headers: Record<string, string>): 
 }
 
 const AUTH_REQUIRED_KINDS = new Set([
-  "generate-form",
-  "generate-manifesto",
   "analyze-form",
   "analyze-form-responses",
   "analyze-manifesto-responses",

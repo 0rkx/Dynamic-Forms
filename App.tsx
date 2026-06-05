@@ -93,11 +93,7 @@ function App() {
                 <FormDetailPage />
               </ProtectedRoute>
             } />
-              <Route path="/create" element={
-                <ProtectedRoute>
-                  <CreateFormPage />
-                </ProtectedRoute>
-              } />
+              <Route path="/create" element={<CreateFormPage />} />
                         <Route path="/form/:id/responses" element={
               <ProtectedRoute>
                 <FormDetailPage />
