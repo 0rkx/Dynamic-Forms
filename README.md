@@ -1,4 +1,5 @@
 # Dynamic Forms
+
 Dynamic Forms is a full-stack form generation and data collection application built to help users automatically generate conversational forms using AI, collect responses, and analyze the resulting data. It provides an AI-driven form generation flow, a conversational UI for respondents, and an admin dashboard for tracking submissions through a React frontend and a Python backend proxy that interfaces with the Gemini API.
 
 ## Table of Contents
