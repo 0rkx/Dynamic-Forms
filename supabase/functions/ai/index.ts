@@ -1,1068 +1,241 @@
 // @ts-nocheck
-import { serve } from "https://deno.land/std@0.171.0/http/server.ts";
+import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 
-// =============================================
-// CORS CONFIGURATION
-// =============================================
-// Allow all origins for development. In production you can
-// replace "*" with your domain, e.g. "https://myapp.com"
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-};
-
-// Gemini API configuration
-const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+const GEMINI_MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-2.0-flash-exp";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+const allowedOrigins = (
+  Deno.env.get("ALLOWED_ORIGINS") ??
+  "https://dynamic-forms.pages.dev,http://localhost:5173,http://127.0.0.1:5173"
+)
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
-// Helper: generate a secure random form ID (mirrors Python implementation)
-function generateSecureFormId(): string {
-  const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-  
-  // Use crypto.getRandomValues for better randomness if available
-  const getRandomBytes = (length: number) => {
-    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-      const array = new Uint8Array(length);
-      crypto.getRandomValues(array);
-      return Array.from(array);
-    } else {
-      return Array.from({ length }, () => Math.floor(Math.random() * 256));
-    }
+type JsonBody = Record<string, unknown> | unknown[] | string | number | boolean | null;
+
+function corsHeaders(req: Request): Record<string, string> {
+  const origin = req.headers.get("Origin") ?? "";
+  const allowedOrigin = allowedOrigins.includes(origin) ? origin : allowedOrigins[0] ?? "";
+
+  return {
+    "Access-Control-Allow-Origin": allowedOrigin,
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Credentials": "true",
   };
-  
-  // Generate high-entropy ID using timestamp + random data
-  const timestamp = Date.now();
-  const performanceNow = typeof performance !== 'undefined' ? performance.now() : Math.random() * 1000000;
-  const randomBytes = getRandomBytes(20); // High entropy
-  
-  // Create multiple seeds for better distribution
-  let seed1 = timestamp;
-  let seed2 = Math.floor(performanceNow * 1000);
-  
-  // Mix in random bytes
-  for (let i = 0; i < randomBytes.length; i++) {
-    if (i % 2 === 0) {
-      seed1 = (seed1 * 256 + randomBytes[i]) % Number.MAX_SAFE_INTEGER;
-    } else {
-      seed2 = (seed2 * 256 + randomBytes[i]) % Number.MAX_SAFE_INTEGER;
-    }
-  }
-  
-  // Generate parts and combine
-  const generatePart = (seed: number, minLength: number) => {
-    let result = '';
-    let num = seed;
-    while (result.length < minLength || num > 0) {
-      result = alphabet[num % 62] + result;
-      num = Math.floor(num / 62);
-    }
-    return result;
-  };
-  
-  const part1 = generatePart(seed1, 8);
-  const part2 = generatePart(seed2, 8);
-  
-  // Add final random suffix
-  const suffix = getRandomBytes(4).map(byte => alphabet[byte % 62]).join('');
-  
-  return `form_${part1}${part2}${suffix}`;
 }
 
-// Generic JSON response helper (adds CORS headers)
-function jsonResponse(body: Record<string, unknown>, status = 200): Response {
+function json(body: JsonBody, status: number, headers: Record<string, string>): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       "Content-Type": "application/json",
-      ...corsHeaders,
+      ...headers,
     },
   });
 }
 
-// Build the system prompt exactly as in the Flask backend
-function buildSystemPrompt(userPrompt: string): string {
-  return `You are an expert form designer and product strategist. Create a comprehensive form structure AND product manifesto based on the user's request.
+async function readJson(req: Request): Promise<Record<string, unknown>> {
+  try {
+    return await req.json();
+  } catch {
+    throw new Response(JSON.stringify({ error: "Invalid Content-Type", message: "Request must be JSON" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+}
 
-The user wants: ${userPrompt}
+async function askGemini(systemPrompt: string, userText: string): Promise<unknown> {
+  if (!GEMINI_API_KEY) {
+    throw new Error("MISSING_GEMINI_API_KEY");
+  }
 
-Return a JSON object with this exact structure:
-\`\`\`json
-{
-  "id": "form_" + random_id,
-  "title": "Form Title",
-  "description": "Form Description", 
-  "manifesto": "Product manifesto text for backward compatibility",
-  "manifestoData": {
-    "productVision": "Clear, concise product vision statement",
-    "targetAudience": "Specific description of the target users/customers", 
-    "businessGoals": ["goal1", "goal2", "goal3"],
-    "keyQuestionAreas": ["area1", "area2", "area3"],
-    "conversationTone": "friendly"
-  },
-  "questions": [
-    {
-      "id": "welcome",
-      "type": "welcome",
-      "label": "Welcome message",
-      "description": "Brief intro to the form"
+  const response = await fetch(`${GEMINI_BASE_URL}/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: userText }] }],
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      generationConfig: { responseMimeType: "application/json" },
+    }),
+  });
+
+  if (response.status === 429) {
+    throw new Error("RATE_LIMIT");
+  }
+
+  if (!response.ok) {
+    throw new Error("GEMINI_REQUEST_FAILED");
+  }
+
+  const payload = await response.json();
+  let content = payload?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  content = String(content).trim();
+  if (content.startsWith("```")) {
+    const lines = content.split("\n");
+    content = lines.slice(1, -1).join("\n");
+  }
+  content = content.replace(/,}/g, "}").replace(/,]/g, "]");
+
+  return JSON.parse(content);
+}
+
+function normalizeQuestion(question: any): any {
+  const normalized = { ...question };
+  if (normalized.type === "multiple_choice") normalized.type = "multiple-choice";
+  if (Array.isArray(normalized.options)) {
+    normalized.options = normalized.options.map((option: any) =>
+      typeof option === "string" ? { label: option, value: option } : option
+    );
+  }
+  return normalized;
+}
+
+function normalizeFormSchema(schema: any): any {
+  const normalized = { ...schema };
+  normalized.id ??= `form_${crypto.randomUUID().replaceAll("-", "")}`;
+  normalized.title ??= "Untitled Form";
+  normalized.description ??= "";
+  normalized.questions = Array.isArray(normalized.questions)
+    ? normalized.questions.map(normalizeQuestion)
+    : [];
+  if (!normalized.questions.length || normalized.questions[0]?.type !== "welcome") {
+    normalized.questions.unshift({
+      id: "welcome",
+      type: "welcome",
+      label: "Welcome",
+      description: "Thanks for taking the time to complete this form.",
+    });
+  }
+  return normalized;
+}
+
+function promptFor(kind: string, body: Record<string, unknown>): { system: string; user: string } {
+  const prompt = String(body.prompt ?? "").trim();
+
+  if (kind === "generate-form") {
+    return {
+      system: `Return only valid JSON for a dynamic form. Shape: {"id":"form_id","title":"string","description":"string","manifesto":"string","manifestoData":{"productVision":"string","targetAudience":"string","businessGoals":["string"],"keyQuestionAreas":["string"],"conversationTone":"friendly|professional|casual|expert"},"questions":[{"id":"welcome","type":"welcome","label":"string","description":"string"},{"id":"q1","type":"text|textarea|multiple-choice|rating|email","label":"string","description":"string","placeholder":"string","required":true,"options":[{"label":"string","value":"string"}]}]}. Include 3-8 strategic questions. First question must be welcome.`,
+      user: `User request: ${prompt}`,
+    };
+  }
+
+  if (kind === "generate-manifesto") {
+    return {
+      system: `Return only valid JSON. Shape: {"manifesto":"string","manifestoData":{"productVision":"string","targetAudience":"string","businessGoals":["string"],"keyQuestionAreas":["string"],"conversationTone":"friendly|professional|casual|expert"}}.`,
+      user: `Create manifesto for: ${prompt}`,
+    };
+  }
+
+  if (kind === "generate-followup") {
+    return {
+      system: `Return only valid JSON for one follow-up question. Shape: {"id":"followup_id","type":"textarea","label":"string","placeholder":"string","required":false}.`,
+      user: `Original question: ${JSON.stringify(body.originalQuestion)}\nUser answer: ${body.userAnswer}`,
+    };
+  }
+
+  if (kind === "generate-intelligent-followup-enhanced") {
+    return {
+      system: `Return only valid JSON for one intelligent follow-up. Shape: {"id":"enhanced_followup_id","type":"textarea","label":"string","placeholder":"string","required":false}.`,
+      user: JSON.stringify(body),
+    };
+  }
+
+  if (kind === "generate-dual-context-question") {
+    return {
+      system: `Return only valid JSON. Shape: {"question":{"id":"dual_context_id","type":"textarea","label":"string","placeholder":"string","required":false},"generationContext":{"triggeredBy":"string","manifestoAlignment":["string"],"formContextUtilized":["string"],"expectedInsights":["string"],"followUpPotential":80}}.`,
+      user: JSON.stringify(body),
+    };
+  }
+
+  if (kind === "generate-manifesto-question") {
+    return {
+      system: `Return only valid JSON. Shape: {"question":{"id":"manifesto_question_id","type":"textarea","label":"string","placeholder":"string","required":false},"reasoning":"string"}.`,
+      user: JSON.stringify(body),
+    };
+  }
+
+  if (kind === "analyze-form") {
+    return {
+      system: `Return only valid JSON. Shape: {"overall_score":85,"insights":[{"category":"string","type":"positive|warning|negative","title":"string","description":"string","impact":"low|medium|high"}],"recommendations":[{"priority":"low|medium|high","action":"string","reason":"string"}],"strengths":["string"],"weaknesses":["string"]}.`,
+      user: JSON.stringify(body.formSchema ?? body),
+    };
+  }
+
+  if (kind === "analyze-form-responses") {
+    return {
+      system: `Return only valid JSON. Shape: {"summary":{"totalResponses":0,"completionRate":0,"averageTimeSpent":"string"},"insights":["string"],"patterns":["string"],"recommendations":["string"]}.`,
+      user: JSON.stringify(body),
+    };
+  }
+
+  if (kind === "analyze-manifesto-responses") {
+    return {
+      system: `Return only valid JSON. Shape: {"overview":{"totalResponses":0,"manifestoAlignment":"low|medium|high","topPriority":"string"},"whatPeopleLike":[{"insight":"string","evidence":["string"],"impact":"low|medium|high","manifestoConnection":"string"}],"whatPeopleDislike":[{"problem":"string","evidence":["string"],"impact":"low|medium|high","manifestoConnection":"string"}],"actionableInsights":[{"title":"string","description":"string","action":"string","priority":"low|medium|high","effort":"low|medium|high","expectedImpact":"string"}],"recommendedActions":[{"action":"string","reason":"string","timeframe":"string","resources":["string"],"success_metric":"string"}]}.`,
+      user: JSON.stringify(body),
+    };
+  }
+
+  return {
+    system: `Return only valid JSON. Shape: {"score":0,"insights":["string"],"recommendations":["string"]}.`,
+    user: JSON.stringify(body),
+  };
+}
+
+async function handleAi(kind: string, req: Request, headers: Record<string, string>): Promise<Response> {
+  const body = await readJson(req);
+  if ((kind === "generate-form" || kind === "generate-manifesto") && String(body.prompt ?? "").trim().length < 5) {
+    return json({ error: "Invalid Prompt", message: "Prompt must be at least 5 characters long" }, 400, headers);
+  }
+
+  try {
+    const { system, user } = promptFor(kind, body);
+    const result = await askGemini(system, user);
+
+    if (kind === "generate-form") return json(normalizeFormSchema(result), 200, headers);
+    if (kind.includes("followup") && result && typeof result === "object" && !Array.isArray(result)) {
+      return json({ id: `${kind}_${Date.now()}`, ...result }, 200, headers);
     }
-    // ... other questions
-  ]
-}
-\`\`\`
-
-MANIFESTO REQUIREMENTS:
-- productVision: 1-2 sentences describing the core purpose and value proposition
-- targetAudience: Specific user demographics, behaviors, or characteristics  
-- businessGoals: 3-5 specific business objectives this form helps achieve (e.g., "increase customer satisfaction", "reduce support tickets")
-- keyQuestionAreas: 3-5 key topics the form should explore
-- conversationTone: Either "friendly", "professional", "casual", or "expert" based on the target audience
-
-FORM REQUIREMENTS:
-- First question MUST be type "welcome"
-- Include 3-8 strategic questions
-- Use appropriate question types: text, textarea, multiple-choice, rating, email
-- Questions should align with the manifesto's key question areas
-- Make questions specific and actionable
-
-Be strategic and ensure the form structure serves the manifesto's goals.`;
+    return json(result as JsonBody, 200, headers);
+  } catch (error) {
+    if (error instanceof Error && error.message === "MISSING_GEMINI_API_KEY") {
+      return json({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500, headers);
+    }
+    if (error instanceof Error && error.message === "RATE_LIMIT") {
+      return json({ error: "Rate Limit Exceeded", message: "AI service is currently busy. Please try again later." }, 429, headers);
+    }
+    return json({ error: "AI Service Error", message: "Failed to complete AI request. Please try again." }, 500, headers);
+  }
 }
 
-// Main request handler
+const routes: Record<string, string> = {
+  "/api/ai/generate-form": "generate-form",
+  "/api/ai/generate-manifesto": "generate-manifesto",
+  "/api/ai/generate-followup": "generate-followup",
+  "/api/ai/generate-intelligent-followup-enhanced": "generate-intelligent-followup-enhanced",
+  "/api/ai/analyze-form": "analyze-form",
+  "/api/ai/analyze-form-responses": "analyze-form-responses",
+  "/api/ai/analyze-manifesto-responses": "analyze-manifesto-responses",
+  "/api/ai/generate-dual-context-question": "generate-dual-context-question",
+  "/api/ai/generate-manifesto-question": "generate-manifesto-question",
+  "/api/ai/analyze-dual-context-conversation": "analyze-dual-context-conversation",
+};
+
 serve(async (req: Request) => {
-  // Production logging removed for security
-  
-  // Handle CORS preflight
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  const headers = corsHeaders(req);
+  if (req.method === "OPTIONS") return new Response("ok", { headers });
 
-  const url = new URL(req.url);
-  const pathname = url.pathname;
-
-  // Health check: GET /health
+  const pathname = new URL(req.url).pathname;
   if (req.method === "GET" && pathname.endsWith("/health")) {
-    return jsonResponse({ status: "healthy", service: "dynamic-forms-ai" });
+    return json({ status: "healthy", service: "dynamic-forms-ai" }, 200, headers);
   }
 
-  // Generate form: POST /api/ai/generate-form
-  if (req.method === "POST" && pathname.endsWith("/api/ai/generate-form")) {
-    if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
-    }
-
-    let body: any;
-    try {
-      body = await req.json();
-    } catch (_e) {
-      return jsonResponse({ error: "Invalid Content-Type", message: "Request must be JSON" }, 400);
-    }
-
-    const prompt: string = (body?.prompt ?? "").trim();
-    if (prompt.length < 5) {
-      return jsonResponse({ error: "Invalid Prompt", message: "Prompt must be at least 5 characters long" }, 400);
-    }
-
-    // Build Gemini request payload
-    const systemPrompt = buildSystemPrompt(prompt);
-    const geminiPayload = {
-      contents: [
-        {
-          parts: [{ text: `User request: \"${prompt}\"` }],
-        },
-      ],
-      systemInstruction: {
-        parts: [{ text: systemPrompt }],
-      },
-      generationConfig: {
-        responseMimeType: "application/json",
-      },
-    };
-
-    try {
-
-      const geminiRes = await fetch(`${GEMINI_BASE_URL}/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(geminiPayload),
-        },
-      );
-
-
-
-      if (geminiRes.status === 429) {
-        return jsonResponse({ error: "Rate Limit Exceeded", message: "AI service is currently busy. Please try again later." }, 429);
-      }
-      if (!geminiRes.ok) {
-        const errorText = await geminiRes.text();
-        return jsonResponse({ error: "AI Service Error", message: "Failed to generate form. Please try again." }, 500);
-      }
-
-      const geminiData = await geminiRes.json();
-      const candidates = geminiData?.candidates ?? [];
-      if (candidates.length === 0) {
-        return jsonResponse({ error: "Generation Failed", message: "Could not generate form schema. Please try again." }, 500);
-      }
-
-      let content: string = candidates[0]?.content?.parts?.[0]?.text ?? "";
-      content = content.trim();
-      if (content.startsWith("```")) {
-        // Strip markdown fences
-        const lines = content.split("\n");
-        content = lines.slice(1, -1).join("\n");
-      }
-      // Remove trailing commas that break JSON
-      content = content.replace(/,}/g, "}").replace(/,]/g, "]");
-
-      let schema: Record<string, unknown>;
-      try {
-        schema = JSON.parse(content);
-      } catch (_e) {
-        return jsonResponse({ error: "Invalid Response", message: "AI generated invalid form schema. Please try again." }, 500);
-      }
-
-      // Ensure schema has an ID
-      if (!schema["id"]) {
-        schema["id"] = generateSecureFormId();
-      }
-
-      // Fix validation issues: normalize question types
-      if (schema["questions"] && Array.isArray(schema["questions"])) {
-        schema["questions"] = schema["questions"].map((q: any) => {
-          // Fix multiple_choice -> multiple-choice
-          if (q.type === "multiple_choice") {
-            q.type = "multiple-choice";
-          }
-          // Fix options format: ensure they're objects with label/value
-          if (q.options && Array.isArray(q.options)) {
-            q.options = q.options.map((opt: any) => {
-              if (typeof opt === "string") {
-                return { label: opt, value: opt };
-              }
-              return opt;
-            });
-          }
-          return q;
-        });
-      }
-
-      return jsonResponse(schema);
-    } catch (e) {
-      // Handle timeout / network
-      return jsonResponse({ error: "Unexpected Error", message: e instanceof Error ? e.message : "Unknown error" }, 500);
-    }
+  const matchedRoute = Object.keys(routes).find((route) => pathname.endsWith(route));
+  if (req.method === "POST" && matchedRoute) {
+    return handleAi(routes[matchedRoute], req, headers);
   }
 
-  // Generate manifesto only: POST /api/ai/generate-manifesto
-  if (req.method === "POST" && pathname.endsWith("/api/ai/generate-manifesto")) {
-    if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
-    }
-
-    let body: any;
-    try {
-      body = await req.json();
-    } catch (_e) {
-      return jsonResponse({ error: "Invalid Content-Type", message: "Request must be JSON" }, 400);
-    }
-
-    const prompt: string = (body?.prompt ?? "").trim();
-    if (prompt.length < 5) {
-      return jsonResponse({ error: "Invalid Prompt", message: "Prompt must be at least 5 characters long" }, 400);
-    }
-
-    // Build manifesto-only system prompt
-    const manifestoPrompt = `You are an expert product strategist. Create a comprehensive product manifesto based on the user's request.
-
-The user wants: ${prompt}
-
-Return a JSON object with this exact structure:
-\`\`\`json
-{
-  "manifesto": "Product manifesto text for backward compatibility",
-  "manifestoData": {
-    "productVision": "Clear, concise product vision statement",
-    "targetAudience": "Specific description of the target users/customers", 
-    "businessGoals": ["goal1", "goal2", "goal3"],
-    "keyQuestionAreas": ["area1", "area2", "area3"],
-    "conversationTone": "friendly"
-  }
-}
-\`\`\`
-
-MANIFESTO REQUIREMENTS:
-- productVision: 1-2 sentences describing the core purpose and value proposition
-- targetAudience: Specific user demographics, behaviors, or characteristics  
-- businessGoals: 3-5 specific business objectives this helps achieve
-- keyQuestionAreas: 3-5 key topics that should be explored
-- conversationTone: Either "friendly", "professional", "casual", or "expert" based on the target audience`;
-
-    const geminiPayload = {
-      contents: [
-        {
-          parts: [{ text: `User request: \"${prompt}\"` }],
-        },
-      ],
-      systemInstruction: {
-        parts: [{ text: manifestoPrompt }],
-      },
-      generationConfig: {
-        responseMimeType: "application/json",
-      },
-    };
-
-    try {
-      const geminiRes = await fetch(`${GEMINI_BASE_URL}/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(geminiPayload),
-        },
-      );
-
-      if (geminiRes.status === 429) {
-        return jsonResponse({ error: "Rate Limit Exceeded", message: "AI service is currently busy. Please try again later." }, 429);
-      }
-      if (!geminiRes.ok) {
-        const errorText = await geminiRes.text();
-        return jsonResponse({ error: "AI Service Error", message: "Failed to generate manifesto. Please try again." }, 500);
-      }
-
-      const geminiData = await geminiRes.json();
-      const candidates = geminiData?.candidates ?? [];
-      if (candidates.length === 0) {
-        return jsonResponse({ error: "Generation Failed", message: "Could not generate manifesto. Please try again." }, 500);
-      }
-
-      let content: string = candidates[0]?.content?.parts?.[0]?.text ?? "";
-      content = content.trim();
-      if (content.startsWith("```")) {
-        const lines = content.split("\n");
-        content = lines.slice(1, -1).join("\n");
-      }
-      content = content.replace(/,}/g, "}").replace(/,]/g, "]");
-
-      let manifesto: Record<string, unknown>;
-      try {
-        manifesto = JSON.parse(content);
-      } catch (_e) {
-        return jsonResponse({ error: "Invalid Response", message: "AI generated invalid manifesto. Please try again." }, 500);
-      }
-
-      return jsonResponse(manifesto);
-    } catch (e) {
-      return jsonResponse({ error: "Unexpected Error", message: e instanceof Error ? e.message : "Unknown error" }, 500);
-    }
-  }
-
-  // Generate follow-up question: POST /api/ai/generate-followup
-  if (req.method === "POST" && pathname.endsWith("/api/ai/generate-followup")) {
-
-    if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
-    }
-
-    let body: any;
-    try {
-      body = await req.json();
-    } catch (_e) {
-      return jsonResponse({ error: "Invalid Content-Type", message: "Request must be JSON" }, 400);
-    }
-
-    const { originalQuestion, userAnswer } = body;
-    if (!originalQuestion || !userAnswer || typeof userAnswer !== 'string' || userAnswer.trim().length === 0) {
-      return jsonResponse(null);
-    }
-
-    const followupPrompt = `Generate a thoughtful follow-up question based on the user's answer.
-
-Original Question: ${originalQuestion.label}
-User's Answer: ${userAnswer}
-
-Return a JSON object with this structure:
-\`\`\`json
-{
-  "id": "followup_" + timestamp,
-  "type": "textarea",
-  "label": "Follow-up question text",
-  "placeholder": "Please elaborate...",
-  "required": false
-}
-\`\`\`
-
-Make the follow-up question:
-- Relevant to their answer
-- Encouraging deeper insight
-- Natural and conversational
-- Brief but meaningful`;
-
-    const geminiPayload = {
-      contents: [{ parts: [{ text: followupPrompt }] }],
-      generationConfig: { responseMimeType: "application/json" },
-    };
-
-    try {
-      const geminiRes = await fetch(`${GEMINI_BASE_URL}/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(geminiPayload),
-      });
-
-      if (!geminiRes.ok) {
-        return jsonResponse(null);
-      }
-
-      const geminiData = await geminiRes.json();
-      const candidates = geminiData?.candidates ?? [];
-      if (candidates.length === 0) {
-        return jsonResponse(null);
-      }
-
-      let content = candidates[0]?.content?.parts?.[0]?.text ?? "";
-      content = content.trim();
-      if (content.startsWith("```")) {
-        const lines = content.split("\n");
-        content = lines.slice(1, -1).join("\n");
-      }
-      content = content.replace(/,}/g, "}").replace(/,]/g, "]");
-
-      try {
-        const followup = JSON.parse(content);
-        followup.id = `followup_${Date.now()}`;
-        return jsonResponse(followup);
-      } catch (_e) {
-        return jsonResponse(null);
-      }
-    } catch (e) {
-      return jsonResponse(null);
-    }
-  }
-
-  // Enhanced follow-up: POST /api/ai/generate-intelligent-followup-enhanced
-  if (req.method === "POST" && pathname.endsWith("/api/ai/generate-intelligent-followup-enhanced")) {
-
-    if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
-    }
-
-    let body: any;
-    try {
-      body = await req.json();
-    } catch (_e) {
-      return jsonResponse({ error: "Invalid Content-Type", message: "Request must be JSON" }, 400);
-    }
-
-    const { formManifesto, conversationContext, currentQuestion, userAnswer, allPreviousAnswers } = body;
-
-    const enhancedPrompt = `You are an expert conversation designer. Generate an intelligent follow-up question.
-
-CONTEXT:
-Form Purpose: ${formManifesto}
-Current Question: ${currentQuestion.label}
-User's Answer: ${userAnswer}
-Previous Answers: ${JSON.stringify(allPreviousAnswers)}
-
-Generate a follow-up that:
-- Builds on their specific answer
-- Aligns with the form's purpose
-- Encourages deeper insights
-- Feels natural and conversational
-
-Return JSON:
-\`\`\`json
-{
-  "id": "enhanced_followup_" + timestamp,
-  "type": "textarea",
-  "label": "Your intelligent follow-up question",
-  "placeholder": "Share more details...",
-  "required": false
-}
-\`\`\``;
-
-    const geminiPayload = {
-      contents: [{ parts: [{ text: enhancedPrompt }] }],
-      generationConfig: { responseMimeType: "application/json" },
-    };
-
-    try {
-      const geminiRes = await fetch(`${GEMINI_BASE_URL}/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(geminiPayload),
-      });
-
-      if (!geminiRes.ok) {
-        return jsonResponse(null);
-      }
-
-      const geminiData = await geminiRes.json();
-      const candidates = geminiData?.candidates ?? [];
-      if (candidates.length === 0) {
-        return jsonResponse(null);
-      }
-
-      let content = candidates[0]?.content?.parts?.[0]?.text ?? "";
-      content = content.trim();
-      if (content.startsWith("```")) {
-        const lines = content.split("\n");
-        content = lines.slice(1, -1).join("\n");
-      }
-      content = content.replace(/,}/g, "}").replace(/,]/g, "]");
-
-      try {
-        const followup = JSON.parse(content);
-        followup.id = `enhanced_followup_${Date.now()}`;
-        return jsonResponse(followup);
-      } catch (_e) {
-        return jsonResponse(null);
-      }
-    } catch (e) {
-      return jsonResponse(null);
-    }
-  }
-
-  // Analyze form: POST /api/ai/analyze-form
-  if (req.method === "POST" && pathname.endsWith("/api/ai/analyze-form")) {
-
-    if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
-    }
-
-    let body: any;
-    try {
-      body = await req.json();
-    } catch (_e) {
-      return jsonResponse({ error: "Invalid Content-Type", message: "Request must be JSON" }, 400);
-    }
-
-    const { formSchema } = body;
-    
-    const analysisPrompt = `Analyze this form schema and provide insights.
-
-Form: ${JSON.stringify(formSchema)}
-
-Provide analysis in this EXACT JSON format:
-\`\`\`json
-{
-  "overall_score": 85,
-  "insights": [
-    {
-      "category": "Form Structure",
-      "type": "positive",
-      "title": "Well-organized question flow",
-      "description": "Questions follow a logical progression",
-      "impact": "high"
-    },
-    {
-      "category": "Question Quality",
-      "type": "warning",
-      "title": "Some questions may be unclear",
-      "description": "Consider simplifying complex questions",
-      "impact": "medium"
-    }
-  ],
-  "recommendations": [
-    {
-      "priority": "high",
-      "action": "Add progress indicator",
-      "reason": "Users benefit from knowing their progress"
-    }
-  ],
-  "strengths": [
-    "Clear question labels",
-    "Good use of different question types",
-    "Logical flow"
-  ],
-  "weaknesses": [
-    "Some questions could be shorter",
-    "Missing validation on key fields"
-  ]
-}
-\`\`\``;
-
-    const geminiPayload = {
-      contents: [{ parts: [{ text: analysisPrompt }] }],
-      generationConfig: { responseMimeType: "application/json" },
-    };
-
-    try {
-      const geminiRes = await fetch(`${GEMINI_BASE_URL}/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(geminiPayload),
-      });
-
-      if (!geminiRes.ok) {
-        return jsonResponse({ error: "AI Service Error", message: "Failed to analyze form" }, 500);
-      }
-
-      const geminiData = await geminiRes.json();
-      const candidates = geminiData?.candidates ?? [];
-      if (candidates.length === 0) {
-        return jsonResponse({ error: "Analysis Failed", message: "Could not analyze form" }, 500);
-      }
-
-      let content = candidates[0]?.content?.parts?.[0]?.text ?? "";
-      content = content.trim();
-      if (content.startsWith("```")) {
-        const lines = content.split("\n");
-        content = lines.slice(1, -1).join("\n");
-      }
-      content = content.replace(/,}/g, "}").replace(/,]/g, "]");
-
-      const analysis = JSON.parse(content);
-      return jsonResponse(analysis);
-    } catch (e) {
-      return jsonResponse({ error: "Unexpected Error", message: e instanceof Error ? e.message : "Unknown error" }, 500);
-    }
-  }
-
-  // Analyze form responses: POST /api/ai/analyze-form-responses
-  if (req.method === "POST" && pathname.endsWith("/api/ai/analyze-form-responses")) {
-
-    if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
-    }
-
-    let body: any;
-    try {
-      body = await req.json();
-    } catch (_e) {
-      return jsonResponse({ error: "Invalid Content-Type", message: "Request must be JSON" }, 400);
-    }
-
-    const { formSchema, responses } = body;
-    
-    const analysisPrompt = `Analyze these form responses and provide insights.
-
-Form: ${formSchema.title}
-Responses: ${JSON.stringify(responses.slice(0, 10))} // Limit for token efficiency
-
-Provide analysis in this JSON format:
-\`\`\`json
-{
-  "summary": {
-    "totalResponses": ${responses.length},
-    "completionRate": 85,
-    "averageTimeSpent": "5 minutes"
-  },
-  "insights": [
-    "Most users prefer option A",
-    "Common theme: ease of use"
-  ],
-  "patterns": [
-    "Users who answer X tend to also answer Y"
-  ],
-  "recommendations": [
-    "Consider adding follow-up questions"
-  ]
-}
-\`\`\``;
-
-    const geminiPayload = {
-      contents: [{ parts: [{ text: analysisPrompt }] }],
-      generationConfig: { responseMimeType: "application/json" },
-    };
-
-    try {
-      const geminiRes = await fetch(`${GEMINI_BASE_URL}/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(geminiPayload),
-      });
-
-      if (!geminiRes.ok) {
-        return jsonResponse({ error: "AI Service Error", message: "Failed to analyze responses" }, 500);
-      }
-
-      const geminiData = await geminiRes.json();
-      const candidates = geminiData?.candidates ?? [];
-      if (candidates.length === 0) {
-        return jsonResponse({ error: "Analysis Failed", message: "Could not analyze responses" }, 500);
-      }
-
-      let content = candidates[0]?.content?.parts?.[0]?.text ?? "";
-      content = content.trim();
-      if (content.startsWith("```")) {
-        const lines = content.split("\n");
-        content = lines.slice(1, -1).join("\n");
-      }
-      content = content.replace(/,}/g, "}").replace(/,]/g, "]");
-
-      const analysis = JSON.parse(content);
-      return jsonResponse(analysis);
-    } catch (e) {
-      return jsonResponse({ error: "Unexpected Error", message: e instanceof Error ? e.message : "Unknown error" }, 500);
-    }
-  }
-
-  // Analyze manifesto responses: POST /api/ai/analyze-manifesto-responses
-  if (req.method === "POST" && pathname.endsWith("/api/ai/analyze-manifesto-responses")) {
-
-    if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
-    }
-
-    let body: any;
-    try {
-      body = await req.json();
-    } catch (_e) {
-      return jsonResponse({ error: "Invalid Content-Type", message: "Request must be JSON" }, 400);
-    }
-
-    const { formSchema, responses } = body;
-    
-    const analysisPrompt = `Analyze how well these responses align with the form's manifesto and goals. Focus on what people like vs dislike and provide actionable insights.
-
-Form Manifesto: ${formSchema.manifesto}
-Business Goals: ${JSON.stringify(formSchema.manifestoData?.businessGoals)}
-Responses: ${JSON.stringify(responses.slice(0, 10))}
-
-Provide analysis in this EXACT JSON format:
-\`\`\`json
-{
-  "overview": {
-    "totalResponses": ${responses.length},
-    "manifestoAlignment": "high",
-    "topPriority": "Main priority based on analysis"
-  },
-  "whatPeopleLike": [
-    {
-      "insight": "What users appreciate",
-      "evidence": ["Specific quotes or data points"],
-      "impact": "high",
-      "manifestoConnection": "How this relates to your manifesto"
-    }
-  ],
-  "whatPeopleDislike": [
-    {
-      "problem": "What users find problematic",
-      "evidence": ["Specific quotes or data points"],
-      "impact": "medium",
-      "manifestoConnection": "How this relates to your manifesto"
-    }
-  ],
-  "actionableInsights": [
-    {
-      "title": "Insight title",
-      "description": "Detailed description",
-      "action": "Specific action to take",
-      "priority": "high",
-      "effort": "low",
-      "expectedImpact": "What you can expect from this change"
-    }
-  ],
-  "recommendedActions": [
-    {
-      "action": "Specific recommendation",
-      "reason": "Why this is important",
-      "timeframe": "1-2 weeks",
-      "resources": ["Resource 1", "Resource 2"],
-      "success_metric": "How to measure success"
-    }
-  ]
-}
-\`\`\``;
-
-    const geminiPayload = {
-      contents: [{ parts: [{ text: analysisPrompt }] }],
-      generationConfig: { responseMimeType: "application/json" },
-    };
-
-    try {
-      const geminiRes = await fetch(`${GEMINI_BASE_URL}/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(geminiPayload),
-      });
-
-      if (!geminiRes.ok) {
-        return jsonResponse({ error: "AI Service Error", message: "Failed to analyze manifesto alignment" }, 500);
-      }
-
-      const geminiData = await geminiRes.json();
-      const candidates = geminiData?.candidates ?? [];
-      if (candidates.length === 0) {
-        return jsonResponse({ error: "Analysis Failed", message: "Could not analyze manifesto alignment" }, 500);
-      }
-
-      let content = candidates[0]?.content?.parts?.[0]?.text ?? "";
-      content = content.trim();
-      if (content.startsWith("```")) {
-        const lines = content.split("\n");
-        content = lines.slice(1, -1).join("\n");
-      }
-      content = content.replace(/,}/g, "}").replace(/,]/g, "]");
-
-      const analysis = JSON.parse(content);
-      return jsonResponse(analysis);
-    } catch (e) {
-      return jsonResponse({ error: "Unexpected Error", message: e instanceof Error ? e.message : "Unknown error" }, 500);
-    }
-  }
-
-  // Generate dual context question: POST /api/ai/generate-dual-context-question
-  if (req.method === "POST" && pathname.endsWith("/api/ai/generate-dual-context-question")) {
-
-    if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
-    }
-
-    let body: any;
-    try {
-      body = await req.json();
-    } catch (_e) {
-      return jsonResponse({ error: "Invalid Content-Type", message: "Request must be JSON" }, 400);
-    }
-
-    const { currentQuestion, userAnswer, manifestoContext, formContext, triggerReason } = body;
-    
-    const dualContextPrompt = `Generate a context-aware follow-up question using dual context analysis.
-
-CURRENT QUESTION: ${currentQuestion.label}
-USER'S ANSWER: ${userAnswer}
-MANIFESTO CONTEXT: ${JSON.stringify(manifestoContext)}
-FORM CONTEXT: ${JSON.stringify(formContext)}
-TRIGGER REASON: ${triggerReason}
-
-Generate a follow-up question that:
-- Leverages both manifesto and form context
-- Builds naturally on the user's answer
-- Aligns with business goals
-- Provides valuable insights
-
-Return JSON:
-\`\`\`json
-{
-  "question": {
-    "id": "dual_context_" + timestamp,
-    "type": "textarea",
-    "label": "Your context-aware question",
-    "placeholder": "Please share more...",
-    "required": false
-  },
-  "generationContext": {
-    "triggeredBy": "${triggerReason}",
-    "manifestoAlignment": ["relevant goals"],
-    "formContextUtilized": ["utilized themes"],
-    "expectedInsights": ["expected insights"],
-    "followUpPotential": 85
-  }
-}
-\`\`\``;
-
-    const geminiPayload = {
-      contents: [{ parts: [{ text: dualContextPrompt }] }],
-      generationConfig: { responseMimeType: "application/json" },
-    };
-
-    try {
-      const geminiRes = await fetch(`${GEMINI_BASE_URL}/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(geminiPayload),
-      });
-
-      if (!geminiRes.ok) {
-        return jsonResponse(null);
-      }
-
-      const geminiData = await geminiRes.json();
-      const candidates = geminiData?.candidates ?? [];
-      if (candidates.length === 0) {
-        return jsonResponse(null);
-      }
-
-      let content = candidates[0]?.content?.parts?.[0]?.text ?? "";
-      content = content.trim();
-      if (content.startsWith("```")) {
-        const lines = content.split("\n");
-        content = lines.slice(1, -1).join("\n");
-      }
-      content = content.replace(/,}/g, "}").replace(/,]/g, "]");
-
-      try {
-        const result = JSON.parse(content);
-        if (result.question) {
-          result.question.id = `dual_context_${Date.now()}`;
-        }
-        return jsonResponse(result);
-      } catch (_e) {
-        return jsonResponse(null);
-      }
-    } catch (e) {
-      return jsonResponse(null);
-    }
-  }
-
-  // Generate manifesto question: POST /api/ai/generate-manifesto-question
-  if (req.method === "POST" && pathname.endsWith("/api/ai/generate-manifesto-question")) {
-
-    if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
-    }
-
-    let body: any;
-    try {
-      body = await req.json();
-    } catch (_e) {
-      return jsonResponse({ error: "Invalid Content-Type", message: "Request must be JSON" }, 400);
-    }
-
-    const { manifestoContext, conversationHistory } = body;
-    
-    const manifestoPrompt = `Generate a question that aligns with the manifesto and conversation context.
-
-MANIFESTO CONTEXT: ${JSON.stringify(manifestoContext)}
-CONVERSATION HISTORY: ${JSON.stringify(conversationHistory)}
-
-Generate a question that:
-- Aligns with the product vision and business goals
-- Builds on the conversation history
-- Targets the specified audience
-- Explores key question areas
-
-Return JSON:
-\`\`\`json
-{
-  "question": {
-    "id": "manifesto_aligned_" + timestamp,
-    "type": "textarea",
-    "label": "Your manifesto-aligned question",
-    "placeholder": "Please elaborate...",
-    "required": false
-  }
-}
-\`\`\``;
-
-    const geminiPayload = {
-      contents: [{ parts: [{ text: manifestoPrompt }] }],
-      generationConfig: { responseMimeType: "application/json" },
-    };
-
-    try {
-      const geminiRes = await fetch(`${GEMINI_BASE_URL}/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(geminiPayload),
-      });
-
-      if (!geminiRes.ok) {
-        return jsonResponse(null);
-      }
-
-      const geminiData = await geminiRes.json();
-      const candidates = geminiData?.candidates ?? [];
-      if (candidates.length === 0) {
-        return jsonResponse(null);
-      }
-
-      let content = candidates[0]?.content?.parts?.[0]?.text ?? "";
-      content = content.trim();
-      if (content.startsWith("```")) {
-        const lines = content.split("\n");
-        content = lines.slice(1, -1).join("\n");
-      }
-      content = content.replace(/,}/g, "}").replace(/,]/g, "]");
-
-      try {
-        const result = JSON.parse(content);
-        if (result.question) {
-          result.question.id = `manifesto_aligned_${Date.now()}`;
-        }
-        return jsonResponse(result);
-      } catch (_e) {
-        return jsonResponse(null);
-      }
-    } catch (e) {
-      return jsonResponse(null);
-    }
-  }
-
-  // Analyze dual context conversation: POST /api/ai/analyze-dual-context-conversation
-  if (req.method === "POST" && pathname.endsWith("/api/ai/analyze-dual-context-conversation")) {
-
-    if (!GEMINI_API_KEY) {
-      return jsonResponse({ error: "Configuration Error", message: "Service temporarily unavailable" }, 500);
-    }
-
-    let body: any;
-    try {
-      body = await req.json();
-    } catch (_e) {
-      return jsonResponse({ error: "Invalid Content-Type", message: "Request must be JSON" }, 400);
-    }
-
-    const { formId, conversationData } = body;
-    
-    const analysisPrompt = `Analyze this dual-context conversation for quality and alignment.
-
-FORM ID: ${formId}
-CONVERSATION DATA: ${JSON.stringify(conversationData)}
-
-Analyze:
-- Quality score based on depth and engagement
-- Manifesto alignment score
-- Context utilization effectiveness
-- Actionable insights discovered
-- Recommendations for improvement
-
-Return JSON:
-\`\`\`json
-{
-  "qualityScore": 85,
-  "manifestoAlignment": 78,
-  "contextUtilization": 92,
-  "insights": [
-    "Strong engagement with product vision",
-    "User responses align with target audience"
-  ],
-  "recommendations": [
-    "Explore business goal #2 more deeply",
-    "Add follow-up on key theme X"
-  ]
-}
-\`\`\``;
-
-    const geminiPayload = {
-      contents: [{ parts: [{ text: analysisPrompt }] }],
-      generationConfig: { responseMimeType: "application/json" },
-    };
-
-    try {
-      const geminiRes = await fetch(`${GEMINI_BASE_URL}/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(geminiPayload),
-      });
-
-      if (!geminiRes.ok) {
-        return jsonResponse({ error: "AI Service Error", message: "Failed to analyze conversation" }, 500);
-      }
-
-      const geminiData = await geminiRes.json();
-      const candidates = geminiData?.candidates ?? [];
-      if (candidates.length === 0) {
-        return jsonResponse({ error: "Analysis Failed", message: "Could not analyze conversation" }, 500);
-      }
-
-      let content = candidates[0]?.content?.parts?.[0]?.text ?? "";
-      content = content.trim();
-      if (content.startsWith("```")) {
-        const lines = content.split("\n");
-        content = lines.slice(1, -1).join("\n");
-      }
-      content = content.replace(/,}/g, "}").replace(/,]/g, "]");
-
-      const analysis = JSON.parse(content);
-      return jsonResponse(analysis);
-    } catch (e) {
-      return jsonResponse({ error: "Unexpected Error", message: e instanceof Error ? e.message : "Unknown error" }, 500);
-    }
-  }
-
-  // Default 404 for other routes
-  return jsonResponse({ error: "Not Found" }, 404);
-}); 
+  return json({ error: "Not Found", message: "Endpoint not found" }, 404, headers);
+});
