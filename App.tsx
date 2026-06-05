@@ -29,8 +29,7 @@ function App() {
   const { authState, initializeAuth } = useAuthStore();
 
   useEffect(() => {
-    // Initialize authentication
-    initializeAuth();
+    const cleanupAuth = initializeAuth();
     
     // Verify database connection
     const verifyConnection = async () => {
@@ -56,6 +55,7 @@ function App() {
     }, 30000); // Check every 30 seconds
 
     return () => {
+      cleanupAuth();
       clearInterval(connectionCheckInterval);
     };
   }, [initializeAuth]);
@@ -93,7 +93,11 @@ function App() {
                 <FormDetailPage />
               </ProtectedRoute>
             } />
-              <Route path="/create" element={<CreateFormPage />} />
+              <Route path="/create" element={
+                <ProtectedRoute>
+                  <CreateFormPage />
+                </ProtectedRoute>
+              } />
                         <Route path="/form/:id/responses" element={
               <ProtectedRoute>
                 <FormDetailPage />

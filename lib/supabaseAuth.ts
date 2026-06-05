@@ -10,6 +10,14 @@ export interface RegisterCredentials extends AuthCredentials {
   displayName?: string;
 }
 
+function appRouteUrl(route: string): string | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const basePath = window.location.pathname.endsWith('/')
+    ? window.location.pathname
+    : `${window.location.pathname}/`;
+  return `${window.location.origin}${basePath}#${route}`;
+}
+
 export class SupabaseAuthService {
   /**
    * Sign up a new user with email and password
@@ -19,6 +27,7 @@ export class SupabaseAuthService {
       email: credentials.email,
       password: credentials.password,
       options: {
+        emailRedirectTo: appRouteUrl('/auth'),
         data: {
           display_name: credentials.displayName || credentials.email.split('@')[0],
         }
@@ -59,7 +68,7 @@ export class SupabaseAuthService {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/#/auth`
+        redirectTo: appRouteUrl('/auth')
       }
     });
 
@@ -90,7 +99,7 @@ export class SupabaseAuthService {
    */
   async sendPasswordResetEmail(email: string): Promise<void> {
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`
+      redirectTo: appRouteUrl('/reset-password')
     });
 
     if (error) {
@@ -102,23 +111,27 @@ export class SupabaseAuthService {
    * Update user profile information
    */
   async updateProfile(updates: { displayName?: string; photoURL?: string }): Promise<User> {
-    const updateData: any = {};
-    
-    if (updates.displayName) {
-      updateData.data = { display_name: updates.displayName };
+    const data: Record<string, string> = {};
+
+    if (updates.displayName !== undefined) {
+      data.display_name = updates.displayName;
     }
 
-    const { data, error } = await supabase.auth.updateUser(updateData);
+    if (updates.photoURL !== undefined) {
+      data.photo_url = updates.photoURL;
+    }
+
+    const { data: response, error } = await supabase.auth.updateUser({ data });
 
     if (error) {
       throw this.formatAuthError(error);
     }
 
-    if (!data.user) {
+    if (!response.user) {
       throw new Error('Failed to update profile');
     }
 
-    return data.user;
+    return response.user;
   }
 
   /**
@@ -193,10 +206,11 @@ export class SupabaseAuthService {
       'too_many_requests': 'Too many requests. Please wait a moment and try again.'
     };
 
-    const message = errorMap[error.message] || error.message || 'An authentication error occurred.';
+    const errorCode = (error as AuthError & { code?: string }).code || error.message;
+    const message = errorMap[errorCode] || error.message || 'An authentication error occurred.';
     
     const formattedError = new Error(message);
-    (formattedError as any).code = error.message;
+    (formattedError as any).code = errorCode;
     
     return formattedError;
   }

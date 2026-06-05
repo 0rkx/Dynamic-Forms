@@ -1,83 +1,9 @@
 import { FormSchema, Question, FormAnalysis } from '../types';
 import { validateFormDataWithRetry, sanitizeInput } from './validation';
 import { generateFormId } from './utils';
-import { AnalysisCache } from './utils';
 import { supabaseService } from './supabaseService';
+import { apiRequest } from './apiClient';
 // Production logging removed
-
-// Cloudflare Worker API.
-// Leave VITE_API_URL empty in production to call same-origin /api routes.
-const _env = (import.meta as any).env ?? {};
-const API_BASE_URL: string = (_env.VITE_API_URL ?? '').replace(/\/$/, '');
-
-// Production logging removed
-
-interface APIError {
-  error: string;
-  message: string;
-}
-
-class APIError extends Error {
-  constructor(public status: number, public errorData: APIError) {
-    super(errorData.message);
-    this.name = 'APIError';
-  }
-}
-
-// Central API error handler that maps backend errors to user-friendly messages
-function handleAPIError(error: any): never {
-  if (error instanceof APIError) {
-    throw new Error(error.errorData.message);
-  }
-  
-  if (error.name === 'TypeError' && error.message.includes('fetch')) {
-    throw new Error('Unable to connect to the server. Please check your internet connection and try again.');
-  }
-  
-  if (error.name === 'AbortError') {
-    throw new Error('Request was cancelled. Please try again.');
-  }
-  
-  // Network or unknown errors
-  throw new Error('Something went wrong. Please try again in a moment.');
-}
-
-// Secure fetch wrapper with timeout and error handling
-async function apiRequest<T>(endpoint: string, options: RequestInit = {}, timeoutMs: number = 30000): Promise<T> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  
-  // Get the Supabase anon key for authorization
-  const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
-  
-  try {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${supabaseAnonKey}`,
-        ...options.headers,
-      },
-      signal: controller.signal,
-    });
-    
-    clearTimeout(timeoutId);
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ 
-        error: 'Unknown Error', 
-        message: 'An unexpected error occurred' 
-      }));
-      throw new APIError(response.status, errorData);
-    }
-    
-    return await response.json();
-  } catch (error) {
-    clearTimeout(timeoutId);
-    handleAPIError(error);
-  }
-}
-
 
 export async function generateFormSchema(prompt: string): Promise<FormSchema> {
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 5) {

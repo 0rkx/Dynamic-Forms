@@ -8,24 +8,32 @@ import ForgotPasswordForm from '../components/auth/ForgotPasswordForm';
 
 type AuthMode = 'login' | 'register' | 'forgot-password';
 
+function hasAuthCallbackParams(location: ReturnType<typeof useLocation>): boolean {
+  const sources = [
+    location.search,
+    location.hash,
+    typeof window !== 'undefined' ? window.location.search : '',
+    typeof window !== 'undefined' ? window.location.hash : '',
+  ];
+
+  return sources.some((source) => {
+    const query = source.includes('?') ? source.slice(source.indexOf('?') + 1) : source.replace(/^#/, '');
+    const params = new URLSearchParams(query);
+    return params.has('access_token') || params.has('refresh_token') || params.has('code') || params.has('type');
+  });
+}
+
 const AuthPage: React.FC = () => {
   const { user, authState } = useAuthStore();
-  const { pendingForm, addForm, setPendingForm } = useFormStore();
+  const { pendingForm } = useFormStore();
   const [mode, setMode] = useState<AuthMode>('login');
   const [isOAuthCallback, setIsOAuthCallback] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
   useEffect(() => {
-    // Check if this is an OAuth callback (URL contains access_token or code)
-    const urlParams = new URLSearchParams(location.hash.substring(1));
-    const hasAccessToken = urlParams.has('access_token');
-    const hasCode = urlParams.has('code');
-    
-    if (hasAccessToken || hasCode) {
-      setIsOAuthCallback(true);
-    }
-  }, [location.hash]);
+    setIsOAuthCallback(hasAuthCallbackParams(location));
+  }, [location]);
 
   useEffect(() => {
     if (authState === 'authenticated' && user) {

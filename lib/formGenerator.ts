@@ -1,13 +1,12 @@
-import { FormSchema, Question, QuestionType } from '../types';
+import { FormSchema, Question } from '../types';
 import { 
   validateFormDataWithRetry, 
   normalizeFormData, 
-  normalizeQuestionData,
-  parseManifesto,
-  parseQuestions
+  normalizeQuestionData
 } from './validation';
 import { generateFormId } from './utils';
 import { generateFormSchema } from './gemini';
+import { apiRequest } from './apiClient';
 
 /**
  * Form Generator with Auto-Retry and Data Normalization
@@ -115,32 +114,17 @@ export async function generateFormWithRetry(
  */
 export async function generateManifestoOnly(
   prompt: string,
-  options: FormGenerationOptions = {}
+  _options: FormGenerationOptions = {}
 ): Promise<{ success: boolean; manifesto?: string; manifestoData?: any; error?: string }> {
   try {
     console.log('📝 Generating manifesto directly via API...');
-    
-    // Build the Cloudflare Worker API URL.
-    const _env: any = (import.meta as any).env ?? {};
-    const apiBaseUrl: string = (_env.VITE_API_URL ?? '').replace(/\/$/, '');
 
-    // Call the backend API directly – backend now builds full system prompt
-    const response = await fetch(`${apiBaseUrl}/api/ai/generate-manifesto`, {
+    const result = await apiRequest<any>('/api/ai/generate-manifesto', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${_env.VITE_SUPABASE_ANON_KEY}`,
-      },
       body: JSON.stringify({
         prompt: prompt.trim()
       })
     });
-
-    if (!response.ok) {
-      throw new Error(`API request failed: ${response.status} ${response.statusText}`);
-    }
-
-    const result = await response.json();
     
     if (result.error) {
       throw new Error(result.message || result.error);
@@ -227,7 +211,7 @@ function generateSimpleManifesto(prompt: string): { success: boolean; manifesto:
  */
 export async function generateQuestionsOnly(
   prompt: string,
-  manifesto?: string,
+  _manifesto?: string,
   options: FormGenerationOptions = {}
 ): Promise<{ success: boolean; questions?: Question[]; error?: string }> {
   try {

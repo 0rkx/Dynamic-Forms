@@ -5,23 +5,67 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Card } from '../components/ui/Card';
 
+function hasRecoveryParams(location: ReturnType<typeof useLocation>): boolean {
+  const sources = [
+    location.search,
+    location.hash,
+    typeof window !== 'undefined' ? window.location.search : '',
+    typeof window !== 'undefined' ? window.location.hash : '',
+  ];
+
+  return sources.some((source) => {
+    const query = source.includes('?') ? source.slice(source.indexOf('?') + 1) : source.replace(/^#/, '');
+    const params = new URLSearchParams(query);
+    return (
+      params.get('type') === 'recovery' ||
+      params.has('access_token') ||
+      params.has('refresh_token') ||
+      params.has('code')
+    );
+  });
+}
+
 const ResetPasswordPage: React.FC = () => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isRecoveryReady, setIsRecoveryReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSuccess, setIsSuccess] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
 
   useEffect(() => {
-    // Check if we have the necessary tokens in the URL
-    const hash = location.hash;
-    const params = new URLSearchParams(hash.substring(hash.indexOf('?')));
-    
-    if (!params.get('access_token') || !params.get('refresh_token')) {
-      setError('Invalid or missing reset token. Please request a new password reset.');
-    }
+    let isMounted = true;
+    const isRecoveryUrl = hasRecoveryParams(location);
+
+    const checkSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!isMounted) return;
+
+      if (data.session) {
+        setIsRecoveryReady(true);
+        setError(null);
+      } else if (!isRecoveryUrl) {
+        setIsRecoveryReady(false);
+        setError('Invalid or missing reset token. Please request a new password reset.');
+      }
+    };
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!isMounted) return;
+      if (event === 'PASSWORD_RECOVERY' && session) {
+        setIsRecoveryReady(true);
+        setError(null);
+      }
+    });
+
+    checkSession();
+
+    return () => {
+      isMounted = false;
+      subscription.unsubscribe();
+    };
   }, [location]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -41,6 +85,11 @@ const ResetPasswordPage: React.FC = () => {
     setError(null);
 
     try {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) {
+        throw new Error('Password reset session is not ready. Please open the latest reset email link and try again.');
+      }
+
       const { error } = await supabase.auth.updateUser({
         password: password
       });
@@ -116,7 +165,7 @@ const ResetPasswordPage: React.FC = () => {
             </h2>
             
             <p className="text-gray-600 text-center mb-6">
-              Enter your new password below.
+              {isRecoveryReady ? 'Enter your new password below.' : 'Verifying your reset link...'}
             </p>
             
             {error && (
@@ -137,7 +186,7 @@ const ResetPasswordPage: React.FC = () => {
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value)}
                   placeholder="Enter your new password"
                   required
-                  disabled={isLoading}
+                  disabled={isLoading || !isRecoveryReady}
                   minLength={6}
                 />
               </div>
@@ -153,7 +202,7 @@ const ResetPasswordPage: React.FC = () => {
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) => setConfirmPassword(e.target.value)}
                   placeholder="Confirm your new password"
                   required
-                  disabled={isLoading}
+                  disabled={isLoading || !isRecoveryReady}
                   minLength={6}
                 />
               </div>
@@ -161,7 +210,7 @@ const ResetPasswordPage: React.FC = () => {
               <Button
                 type="submit"
                 className="w-full"
-                disabled={isLoading || !password || !confirmPassword || password !== confirmPassword}
+                disabled={isLoading || !isRecoveryReady || !password || !confirmPassword || password !== confirmPassword}
               >
                 {isLoading ? 'Updating Password...' : 'Update Password'}
               </Button>

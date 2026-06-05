@@ -6,74 +6,8 @@ import {
   CachedFormContext
 } from '../types';
 import { generateFormId } from './utils';
-import { validateFormDataWithRetry, sanitizeInput } from './validation';
-
-// Cloudflare Worker API.
-// Leave VITE_API_URL empty in production to call same-origin /api routes.
-const _env = (import.meta as any).env ?? {};
-const API_BASE_URL: string = (_env.VITE_API_URL ?? '').replace(/\/$/, '');
-
-interface APIError {
-  error: string;
-  message: string;
-}
-
-class APIError extends Error {
-  constructor(public status: number, public errorData: APIError) {
-    super(errorData.message);
-    this.name = 'APIError';
-  }
-}
-
-// Enhanced API request handler
-async function apiRequest<T>(endpoint: string, options: RequestInit = {}, timeoutMs: number = 30000): Promise<T> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  
-  // Get the Supabase anon key for authorization
-  const supabaseAnonKey = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY;
-  
-  try {
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${supabaseAnonKey}`,
-        ...options.headers,
-      },
-      signal: controller.signal,
-    });
-    
-    clearTimeout(timeoutId);
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({ 
-        error: 'Unknown Error', 
-        message: 'An unexpected error occurred' 
-      }));
-      throw new APIError(response.status, errorData);
-    }
-    
-    return await response.json();
-  } catch (error) {
-    clearTimeout(timeoutId);
-    if (error instanceof APIError) {
-      throw new Error(error.errorData.message);
-    }
-    
-    const errorObj = error instanceof Error ? error : new Error(String(error));
-    
-    if (errorObj.name === 'TypeError' && errorObj.message.includes('fetch')) {
-      throw new Error('Unable to connect to the server. Please check your internet connection and try again.');
-    }
-    
-    if (errorObj.name === 'AbortError') {
-      throw new Error('Request was cancelled. Please try again.');
-    }
-    
-    throw new Error('Something went wrong. Please try again in a moment.');
-  }
-}
+import { sanitizeInput } from './validation';
+import { apiRequest } from './apiClient';
 
 /**
  * Generate a context-aware question using the dual-context system
@@ -138,10 +72,6 @@ export async function generateDualContextQuestion(
 }
 
 // Legacy stub – prompt assembly is now handled in the backend for security reasons.
-function buildDualContextPrompt(): string {
-  return '';
-}
-
 /**
  * Fallback context-aware question generation
  * Used when the main AI service is unavailable

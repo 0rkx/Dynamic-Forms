@@ -4,6 +4,10 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-06-05",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "SUPABASE_URL": "https://fphovkacnxhvdybjwvsb.supabase.co",
+    "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_3tImLkrQB_l4HDi8sOsbHQ_b1mhpjO3"
+  },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

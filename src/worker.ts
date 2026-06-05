@@ -6,6 +6,9 @@ interface Env {
   GEMINI_API_KEY?: string;
   GEMINI_MODEL?: string;
   ALLOWED_ORIGINS?: string;
+  SUPABASE_URL?: string;
+  SUPABASE_PUBLISHABLE_KEY?: string;
+  SUPABASE_ANON_KEY?: string;
 }
 
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -41,6 +44,57 @@ function json(body: JsonBody, status: number, headers: Record<string, string>): 
       ...headers,
     },
   });
+}
+
+const AUTH_REQUIRED_KINDS = new Set([
+  "generate-form",
+  "generate-manifesto",
+  "analyze-form",
+  "analyze-form-responses",
+  "analyze-manifesto-responses",
+  "analyze-dual-context-conversation",
+]);
+
+function bearerToken(request: Request): string | null {
+  const authorization = request.headers.get("Authorization") ?? "";
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || null;
+}
+
+async function authenticateUser(request: Request, env: Env): Promise<{ ok: true } | { ok: false; status: number; message: string }> {
+  const token = bearerToken(request);
+  if (!token) {
+    return { ok: false, status: 401, message: "Sign in required." };
+  }
+
+  const supabaseUrl = env.SUPABASE_URL?.replace(/\/$/, "");
+  const supabaseKey = env.SUPABASE_PUBLISHABLE_KEY ?? env.SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !supabaseKey) {
+    return { ok: false, status: 500, message: "Supabase auth is not configured on the API worker." };
+  }
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      apikey: supabaseKey,
+    },
+  });
+
+  if (response.status === 401 || response.status === 403) {
+    return { ok: false, status: 401, message: "Invalid or expired session. Please sign in again." };
+  }
+
+  if (!response.ok) {
+    console.error("Supabase auth verification failed", { status: response.status });
+    return { ok: false, status: 502, message: "Could not verify your session. Please try again." };
+  }
+
+  const user = await response.json().catch(() => null);
+  if (!user?.id) {
+    return { ok: false, status: 401, message: "Invalid session user." };
+  }
+
+  return { ok: true };
 }
 
 async function readJson(request: Request): Promise<Record<string, unknown>> {
@@ -205,7 +259,30 @@ async function handleAi(
   request: Request,
   headers: Record<string, string>
 ): Promise<Response> {
-  const body = await readJson(request);
+  if (AUTH_REQUIRED_KINDS.has(kind)) {
+    const auth = await authenticateUser(request, env);
+    if (!auth.ok) {
+      return json({ error: "Unauthorized", message: auth.message }, auth.status, headers);
+    }
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = await readJson(request);
+  } catch (error) {
+    if (error instanceof Response) {
+      const errorBody = await error.text();
+      return new Response(errorBody, {
+        status: error.status,
+        headers: {
+          "Content-Type": "application/json",
+          ...headers,
+        },
+      });
+    }
+    throw error;
+  }
+
   if ((kind === "generate-form" || kind === "generate-manifesto") && String(body.prompt ?? "").trim().length < 5) {
     return json({ error: "Invalid Prompt", message: "Prompt must be at least 5 characters long" }, 400, headers);
   }

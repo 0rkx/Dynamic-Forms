@@ -1,9 +1,10 @@
 import { create } from 'zustand';
 import { User, Session } from '@supabase/supabase-js';
 import { supabaseAuth, AuthCredentials, RegisterCredentials } from '../lib/supabaseAuth';
-import { supabase } from '../lib/supabase';
 
 export type AuthState = 'loading' | 'authenticated' | 'unauthenticated';
+
+let activeAuthCleanup: (() => void) | null = null;
 
 interface AuthStore {
   user: User | null;
@@ -20,7 +21,7 @@ interface AuthStore {
   updateProfile: (updates: { displayName?: string; photoURL?: string }) => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
   clearError: () => void;
-  initializeAuth: () => void;
+  initializeAuth: () => () => void;
   
   // Helper getters
   isAuthenticated: () => boolean;
@@ -151,10 +152,10 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       
       const updatedUser = await supabaseAuth.updateProfile(updates);
       
-      set((state) => ({
+      set({
         user: updatedUser,
         error: null
-      }));
+      });
     } catch (error: any) {
       set({ error: error.message });
       throw error;
@@ -179,17 +180,32 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   },
 
   initializeAuth: () => {
-    // Get initial session
+    if (activeAuthCleanup) {
+      return activeAuthCleanup;
+    }
+
+    let isActive = true;
+    set({ authState: 'loading', error: null });
+
     supabaseAuth.getCurrentSession().then((session) => {
+      if (!isActive) return;
       set({ 
         user: session?.user || null, 
         session, 
         authState: session?.user ? 'authenticated' : 'unauthenticated' 
       });
+    }).catch((error: any) => {
+      if (!isActive) return;
+      set({
+        user: null,
+        session: null,
+        authState: 'unauthenticated',
+        error: error?.message || 'Failed to initialize authentication'
+      });
     });
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabaseAuth.onAuthStateChanged((event, session) => {
+    const { data: { subscription } } = supabaseAuth.onAuthStateChanged((_event, session) => {
+      if (!isActive) return;
       set({ 
         user: session?.user || null, 
         session,
@@ -198,10 +214,13 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
       });
     });
 
-    // Return cleanup function
-    return () => {
+    activeAuthCleanup = () => {
+      isActive = false;
       subscription.unsubscribe();
+      activeAuthCleanup = null;
     };
+
+    return activeAuthCleanup;
   },
 
   // Helper getters
@@ -227,9 +246,6 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
            'User';
   },
 }));
-
-// Initialize auth on store creation
-useAuthStore.getState().initializeAuth();
 
 // Export store instance for access from other stores if needed
 export const authStore = useAuthStore; 
