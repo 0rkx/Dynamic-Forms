@@ -4,7 +4,7 @@
   X-Content-Type-Options: nosniff
   X-XSS-Protection: 1; mode=block
   Referrer-Policy: strict-origin-when-cross-origin
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://esm.sh https://fonts.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://sheets.googleapis.com;
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://esm.sh https://fonts.googleapis.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com https://frontend-cdn.perplexity.ai; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https://sheets.googleapis.com https://dynamic-forms.owaisrazakhan242.workers.dev https://api.forms.orkx.xyz;
   Permissions-Policy: camera=(), microphone=(), geolocation=()
 
 # Cache static assets for 1 year
