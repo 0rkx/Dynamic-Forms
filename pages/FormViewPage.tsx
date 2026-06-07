@@ -336,6 +336,8 @@ const FormViewPage: React.FC = () => {
 
     // Check for intelligent follow-up
     const currentFollowUpCount = followUpCounters[currentQuestion.id] || 0;
+    const maxTotalFollowUps = Math.min(form?.aiConfig?.maxDynamicQuestions ?? 2, 2);
+    const maxFollowUpsPerQuestion = 1;
     
     // Use the resolved manifesto (which was resolved when the form loaded)
     const effectiveManifesto = resolvedManifesto;
@@ -390,8 +392,8 @@ const FormViewPage: React.FC = () => {
       !currentQuestion.isFollowUp &&
       !shouldSkipFollowUp &&
       !shouldSkipForBasicInfo &&  // Add the new check
-      totalFollowUpsShown < 10 &&
-      currentFollowUpCount < 3 &&
+      totalFollowUpsShown < maxTotalFollowUps &&
+      currentFollowUpCount < maxFollowUpsPerQuestion &&
       effectiveManifesto &&
       value !== undefined && value !== null &&
       (
@@ -447,27 +449,7 @@ const FormViewPage: React.FC = () => {
           setConversationContexts(prev => ({ ...prev, [currentQuestion.id]: context }));
         }
       } catch (error) {
-        // Fallback: Create a simple follow-up question if AI generation fails
-        if (value && typeof value === 'string' && value.length > 20) {
-          const fallbackFollowUpId = `${currentQuestion.id}_fallback_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          
-          const fallbackQuestion: Question = {
-            id: fallbackFollowUpId,
-            type: 'text',
-            label: 'That\'s interesting! Can you tell me more about that?',
-            placeholder: 'Feel free to elaborate...',
-            required: false,
-            isFollowUp: true,
-            originalQuestionId: currentQuestion.id,
-          };
-          
-          const newQuestions = [...localQuestions];
-          newQuestions.splice(currentQuestionIndex + 1, 0, fallbackQuestion);
-          setLocalQuestions(newQuestions);
-          
-          setFollowUpCounters(prev => ({ ...prev, [currentQuestion.id]: currentFollowUpCount + 1 }));
-          setTotalFollowUpsShown(prev => prev + 1);
-        }
+        // Fail closed: no synthetic follow-up when AI cannot produce one.
       } finally {
         setIsLoadingFollowUp(false);
       }

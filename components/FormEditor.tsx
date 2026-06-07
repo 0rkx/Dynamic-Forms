@@ -87,7 +87,7 @@ const FormEditor: React.FC<FormEditorProps> = ({ schema, onSchemaChange }) => {
         const aiConfig = enabled ? {
             enabled: true,
             conversationStyle: 'friendly' as const,
-            maxDynamicQuestions: 5,
+            maxDynamicQuestions: 2,
             adaptationLevel: 'medium' as const,
             personalityTraits: ['empathetic', 'curious']
         } : undefined;
