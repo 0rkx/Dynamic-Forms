@@ -194,6 +194,49 @@ function normalizeFormSchema(schema: any): any {
   return normalized;
 }
 
+function recordOf(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function questionLabel(question: unknown): string {
+  return String(recordOf(question).label ?? "");
+}
+
+function conversationHistoryText(context: unknown): string {
+  const history = recordOf(context).conversationHistory;
+  if (!Array.isArray(history) || history.length === 0) {
+    return "No previous follow-up thread.";
+  }
+
+  return history
+    .map((entry, index) => {
+      const item = recordOf(entry);
+      return `Q${index + 1}: ${questionLabel(item.question)}\nA${index + 1}: ${String(item.answer ?? "")}`;
+    })
+    .join("\n");
+}
+
+function previousAnswersText(value: unknown): string {
+  const answers = recordOf(value);
+  const entries = Object.entries(answers)
+    .filter(([, answer]) => answer !== undefined && answer !== null && String(answer).trim())
+    .map(([questionId, answer]) => `- ${questionId}: ${String(answer)}`);
+
+  return entries.length ? entries.join("\n") : "No previous answers.";
+}
+
+function conversationMetricsText(metricsValue: unknown): string {
+  const metrics = recordOf(metricsValue);
+  return [
+    `Thread length: ${String(metrics.threadLength ?? 0)}`,
+    `Average answer length: ${String(metrics.averageAnswerLength ?? 0)} characters`,
+    `Quality score: ${String(metrics.qualityScore ?? 0)}/100`,
+    `Quality insights: ${Array.isArray(metrics.qualityInsights) ? metrics.qualityInsights.join(", ") : "none"}`,
+  ].join("\n");
+}
+
 function promptFor(kind: string, body: Record<string, unknown>): { system: string; user: string } {
   const prompt = String(body.prompt ?? "").trim();
 
@@ -212,16 +255,62 @@ function promptFor(kind: string, body: Record<string, unknown>): { system: strin
   }
 
   if (kind === "generate-followup") {
+    const originalQuestion = recordOf(body.originalQuestion);
     return {
-      system: `Return only valid JSON for one follow-up question. Shape: {"id":"followup_id","type":"textarea","label":"string","placeholder":"string","required":false}.`,
-      user: `Original question: ${JSON.stringify(body.originalQuestion)}\nUser answer: ${body.userAnswer}`,
+      system: `You are an expert conversational analyst. Generate a concise, relevant follow-up only when the user's answer is vague, non-specific, incomplete, or indicates uncertainty.
+
+Do not ask a follow-up just because an answer is short. Treat direct factual answers such as names, emails, ratings, yes/no answers, selected options, dates, error codes, and status codes as complete unless the original question clearly needs one missing detail.
+
+If the answer is already specific and clear, return {}.
+
+If a follow-up is needed, return only one raw JSON object with this shape: {"type":"text|textarea","label":"string","placeholder":"string","required":false}.`,
+      user: `Original Question: "${String(originalQuestion.label ?? "")}"\nUser's Answer: "${String(body.userAnswer ?? "")}"`,
     };
   }
 
   if (kind === "generate-intelligent-followup-enhanced") {
     return {
-      system: `Return only valid JSON for one intelligent follow-up. Shape: {"id":"enhanced_followup_id","type":"textarea","label":"string","placeholder":"string","required":false}.`,
-      user: JSON.stringify(body),
+      system: `You are an expert conversational analyst and product strategist. Your job is to ask fewer, better follow-up questions.
+
+Return {} by default. Ask a follow-up only when all are true:
+- The user's latest answer is vague, incomplete, contradictory, or missing one detail that materially affects the form manifesto.
+- The question has not already been answered by the current answer, previous answers, or conversation history.
+- One extra question is worth the user's time.
+
+Do not ask a follow-up just because an answer is short. Treat direct factual answers such as names, emails, ratings, yes/no answers, selected options, dates, error codes, and status codes as complete unless the manifesto clearly requires one missing detail.
+
+Smart stopping conditions:
+- Critical objective already satisfied.
+- User answer is clear enough to move on.
+- Asking more would feel repetitive.
+- Engagement is low or the thread already has a follow-up.
+
+If a follow-up is needed:
+- Ask exactly one question.
+- Make it natural and specific to the user's words.
+- Avoid generic phrasing like "Can you tell me more about that?"
+- Use text or textarea by default; use multiple-choice only when it reduces effort.
+
+Return only raw JSON. For no follow-up, return {}. For a follow-up, use this shape: {"type":"text|textarea|multiple-choice","label":"string","description":"string","placeholder":"string","options":[{"value":"string","label":"string"}],"required":false}.`,
+      user: `FORM MANIFESTO:
+${String(body.formManifesto ?? "")}
+
+ROOT THREAD:
+${conversationHistoryText(body.conversationContext)}
+
+CURRENT QUESTION:
+"${questionLabel(body.currentQuestion)}"
+
+USER'S LATEST ANSWER:
+"${String(body.userAnswer ?? "")}"
+
+PREVIOUS FORM ANSWERS:
+${previousAnswersText(body.previousAnswers)}
+
+ENGAGEMENT METRICS:
+${conversationMetricsText(body.conversationMetrics)}
+
+Decide whether one follow-up is truly needed.`,
     };
   }
 
@@ -305,8 +394,17 @@ async function handleAi(
     const result = await askGemini(env, system, user);
 
     if (kind === "generate-form") return json(normalizeFormSchema(result), 200, headers);
-    if (kind.includes("followup") && result && typeof result === "object" && !Array.isArray(result)) {
-      return json({ id: `${kind}_${Date.now()}`, ...result }, 200, headers);
+    if (kind.includes("followup")) {
+      if (!result || typeof result !== "object" || Array.isArray(result)) {
+        return json(null, 200, headers);
+      }
+
+      const followup = result as Record<string, unknown>;
+      if (!String(followup.label ?? "").trim()) {
+        return json(null, 200, headers);
+      }
+
+      return json({ id: `${kind}_${Date.now()}`, ...followup }, 200, headers);
     }
     return json(result as JsonBody, 200, headers);
   } catch (error) {

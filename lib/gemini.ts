@@ -66,7 +66,7 @@ export async function generateFormSchema(prompt: string): Promise<FormSchema> {
             aiConfig: {
                 enabled: true,
                 conversationStyle: 'friendly',
-                maxDynamicQuestions: 5,
+                maxDynamicQuestions: 2,
                 adaptationLevel: 'medium',
                 personalityTraits: ['empathetic', 'curious']
             },
