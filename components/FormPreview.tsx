@@ -36,6 +36,8 @@ const FormPreview: React.FC<FormPreviewProps> = ({ schema }) => {
   }>>({});
   const [followUpCounters, setFollowUpCounters] = useState<Record<string, number>>({});
   const [totalFollowUpsShown, setTotalFollowUpsShown] = useState(0);
+  const maxTotalFollowUps = Math.min(schema.aiConfig?.maxDynamicQuestions ?? 2, 2);
+  const maxFollowUpsPerQuestion = 1;
 
   const progress = ((currentQuestionIndex) / (localQuestions.length-1)) * 100;
 
@@ -69,7 +71,7 @@ const FormPreview: React.FC<FormPreviewProps> = ({ schema }) => {
         schema.manifesto && 
         value && 
         (currentQuestion.type === 'text' || currentQuestion.type === 'textarea' || currentQuestion.type === 'multiple-choice') &&
-        totalFollowUpsShown < 10) {
+        totalFollowUpsShown < maxTotalFollowUps) {
       
       // Determine the conversation thread key
       const conversationKey = currentQuestion.isFollowUp ? 
@@ -88,11 +90,11 @@ const FormPreview: React.FC<FormPreviewProps> = ({ schema }) => {
           conversationContext = createConversationContext(rootQuestion);
       }
       
-      // Check conversation limits (max 4 exchanges per thread in preview)
+      // Keep previews concise: one follow-up per original question.
       const currentThreadLength = conversationContext.conversationHistory.length;
       const rootQuestionFollowUpCount = followUpCounters[conversationKey] || 0;
       
-      if (currentThreadLength < 4 && rootQuestionFollowUpCount < 4) {
+      if (currentThreadLength < maxFollowUpsPerQuestion && rootQuestionFollowUpCount < maxFollowUpsPerQuestion) {
         setIsGeneratingFollowUp(true);
         
         try {

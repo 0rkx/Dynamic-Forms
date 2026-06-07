@@ -1,7 +1,9 @@
 import { supabase } from './supabase';
 
 const _env = (import.meta as any).env ?? {};
-const API_BASE_URL: string = (_env.VITE_API_URL ?? '').replace(/\/$/, '');
+const DEFAULT_API_BASE_URL = 'https://dynamic-forms.owaisrazakhan242.workers.dev';
+const configuredApiBaseUrl = typeof _env.VITE_API_URL === 'string' ? _env.VITE_API_URL.trim() : '';
+const API_BASE_URL: string = (configuredApiBaseUrl || DEFAULT_API_BASE_URL).replace(/\/$/, '');
 
 interface APIErrorBody {
   error: string;

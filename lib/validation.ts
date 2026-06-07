@@ -275,6 +275,29 @@ export function normalizeQuestionData(question: any): any {
     });
   }
 
+  if (normalized.type === 'rating') {
+    if (normalized.min === undefined || normalized.min === null) {
+      normalized.min = 1;
+    }
+
+    if (normalized.max === undefined || normalized.max === null) {
+      const numericOptionValues = Array.isArray(normalized.options)
+        ? normalized.options
+            .map((option: any) => Number(option?.value ?? option?.label))
+            .filter((value: number) => Number.isFinite(value))
+        : [];
+
+      normalized.max = numericOptionValues.length
+        ? Math.max(...numericOptionValues)
+        : 5;
+    }
+
+    if (normalized.min >= normalized.max) {
+      normalized.min = 1;
+      normalized.max = Math.max(5, normalized.max);
+    }
+  }
+
   // Ensure required fields have defaults
   if (!normalized.id) {
     normalized.id = `q_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -441,4 +464,4 @@ export function parseQuestions(questionsData: any[]): any[] {
     
     return normalized;
   });
-} 
+}

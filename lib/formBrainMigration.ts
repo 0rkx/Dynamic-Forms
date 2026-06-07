@@ -162,7 +162,7 @@ export function autoMigrateForm(formSchema: FormSchema): {
     newSchema.aiConfig = {
       enabled: true,
       conversationStyle: 'friendly',
-      maxDynamicQuestions: 5,
+      maxDynamicQuestions: 2,
       adaptationLevel: 'medium',
       personalityTraits: ['empathetic', 'curious']
     };
@@ -218,4 +218,4 @@ export function compareFormBrainPerformance(): {
       'Positions product as genuinely intelligent, not just automated'
     ]
   };
-} 
+}
