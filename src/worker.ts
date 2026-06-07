@@ -157,6 +157,21 @@ function normalizeQuestion(question: any): any {
       typeof option === "string" ? { label: option, value: option } : option
     );
   }
+  if (normalized.type === "rating") {
+    normalized.min ??= 1;
+    if (normalized.max === undefined || normalized.max === null) {
+      const numericOptionValues = Array.isArray(normalized.options)
+        ? normalized.options
+            .map((option: any) => Number(option?.value ?? option?.label))
+            .filter((value: number) => Number.isFinite(value))
+        : [];
+      normalized.max = numericOptionValues.length ? Math.max(...numericOptionValues) : 5;
+    }
+    if (normalized.min >= normalized.max) {
+      normalized.min = 1;
+      normalized.max = Math.max(5, normalized.max);
+    }
+  }
   return normalized;
 }
 
@@ -184,7 +199,7 @@ function promptFor(kind: string, body: Record<string, unknown>): { system: strin
 
   if (kind === "generate-form") {
     return {
-      system: `Return only valid JSON for a dynamic form. Shape: {"id":"form_id","title":"string","description":"string","manifesto":"string","manifestoData":{"productVision":"string","targetAudience":"string","businessGoals":["string"],"keyQuestionAreas":["string"],"conversationTone":"friendly|professional|casual|expert"},"questions":[{"id":"welcome","type":"welcome","label":"string","description":"string"},{"id":"q1","type":"text|textarea|multiple-choice|rating|email","label":"string","description":"string","placeholder":"string","required":true,"options":[{"label":"string","value":"string"}]}]}. Include 3-8 strategic questions. First question must be welcome.`,
+      system: `Return only valid JSON for a dynamic form. Shape: {"id":"form_id","title":"string","description":"string","manifesto":"string","manifestoData":{"productVision":"string","targetAudience":"string","businessGoals":["string"],"keyQuestionAreas":["string"],"conversationTone":"friendly|professional|casual|expert"},"questions":[{"id":"welcome","type":"welcome","label":"string","description":"string"},{"id":"q1","type":"text|textarea|multiple-choice|rating|email","label":"string","description":"string","placeholder":"string","required":true,"options":[{"label":"string","value":"string"}],"min":1,"max":5}]}. Include 3-8 strategic questions. First question must be welcome. Rating questions must include numeric min and max values.`,
       user: `User request: ${prompt}`,
     };
   }
